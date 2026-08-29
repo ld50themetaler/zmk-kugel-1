@@ -16,6 +16,7 @@
 #include <zephyr/sys/reboot.h>
 #include <hal/nrf_power.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
 
 #include "../sensor/paw3204/paw3204.h"
 
@@ -42,8 +43,10 @@ struct kscan_kugel_data {
 	kscan_callback_t callback;
 	struct k_work_delayable work;
 	struct k_work_delayable led_work;
+	struct gpio_callback int_cb;
 	uint16_t last_raw[3];
 	uint32_t scan_count;
+	uint32_t idle_scan_count;
 	bool settings_loaded;
 	bool is_connected;
 	int led_blink_count;
@@ -138,6 +141,13 @@ static void check_touch_reset(struct kscan_kugel_data *data)
 	}
 }
 
+static void kscan_kugel_int_handler(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins)
+{
+	struct kscan_kugel_data *data = CONTAINER_OF(cb, struct kscan_kugel_data, int_cb);
+	data->idle_scan_count = 0;
+	k_work_reschedule(&data->work, K_NO_WAIT);
+}
+
 static void kscan_kugel_work_handler(struct k_work *work)
 {
 	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
@@ -154,12 +164,17 @@ static void kscan_kugel_work_handler(struct k_work *work)
 	check_touch_reset(data);
 
 	uint16_t current_raw[3] = { 0xFFFF, 0xFFFF, 0xFFFF };
+	bool any_pressed = false;
 
 	for (uint8_t chip = 0; chip < 3; chip++) {
 		uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
 		uint8_t rx[4] = { 0 };
 		if (mcp23s17_transfer(&cfg->spi, tx, rx, 4) == 0) {
 			current_raw[chip] = (uint16_t)rx[2] | ((uint16_t)rx[3] << 8);
+		}
+
+		if (current_raw[chip] != 0xFFFF) {
+			any_pressed = true;
 		}
 
 		uint16_t changed = current_raw[chip] ^ data->last_raw[chip];
@@ -182,7 +197,18 @@ static void kscan_kugel_work_handler(struct k_work *work)
 		}
 	}
 
-	k_work_reschedule(&data->work, K_MSEC(5));
+	if (any_pressed) {
+		data->idle_scan_count = 0;
+	} else {
+		if (data->idle_scan_count < 100) {
+			data->idle_scan_count++;
+		}
+	}
+
+	// Active (pressed/releasing): 5ms scan rate
+	// Idle (stable unpressed): 50ms scan rate (IO_INT interrupt instantly wakes back to 5ms)
+	uint32_t next_scan_ms = (data->idle_scan_count >= 20) ? 50 : 5;
+	k_work_reschedule(&data->work, K_MSEC(next_scan_ms));
 }
 
 static int kscan_kugel_configure(const struct device *dev, kscan_callback_t callback)
@@ -226,6 +252,7 @@ static int kscan_kugel_init(const struct device *dev)
 	data->last_raw[1] = 0xFFFF;
 	data->last_raw[2] = 0xFFFF;
 	data->scan_count = 0;
+	data->idle_scan_count = 0;
 	data->settings_loaded = false;
 	data->is_connected = false;
 	data->led_blink_count = 6; // 3 clean blinks
@@ -259,30 +286,53 @@ static int kscan_kugel_init(const struct device *dev)
 		gpio_pin_set_raw(cfg->row_gpio.port, cfg->row_gpio.pin, 0);
 	}
 
-	// 3. MCP23S17 Initialization
+	// 3. MCP23S17 Initialization (Broadcast & Individual)
 	uint8_t rx_dummy[4];
 	{
-		uint8_t tx[] = { 0x40, 0x0C, 0xFF, 0xFF };
+		uint8_t tx[] = { 0x40, 0x0C, 0xFF, 0xFF }; // GPPU: Pull-ups on all pins
 		mcp23s17_transfer(&cfg->spi, tx, rx_dummy, sizeof(tx));
 	}
 	k_msleep(2);
 	{
-		uint8_t tx[] = { 0x40, 0x04, 0xFF, 0xFF };
+		uint8_t tx[] = { 0x40, 0x04, 0xFF, 0xFF }; // GPINTEN: Enable interrupt on all pins
 		mcp23s17_transfer(&cfg->spi, tx, rx_dummy, sizeof(tx));
 	}
 	k_msleep(2);
 	{
-		uint8_t tx[] = { 0x40, 0x0A, 0x4C };
+		uint8_t tx[] = { 0x40, 0x0A, 0x4C }; // IOCON: MIRROR=1, HAEN=1, ODR=1
 		mcp23s17_transfer(&cfg->spi, tx, rx_dummy, sizeof(tx));
 	}
 	k_msleep(5);
 
 	for (uint8_t chip = 0; chip < 3; chip++) {
+		// GPPU (0x0C): Pull-ups
 		uint8_t tx_gppu[] = { (uint8_t)(0x40 | (chip << 1)), 0x0C, 0xFF, 0xFF };
 		mcp23s17_transfer(&cfg->spi, tx_gppu, rx_dummy, sizeof(tx_gppu));
 
+		// IODIR (0x00): Inputs
 		uint8_t tx_iodir[] = { (uint8_t)(0x40 | (chip << 1)), 0x00, 0xFF, 0xFF };
 		mcp23s17_transfer(&cfg->spi, tx_iodir, rx_dummy, sizeof(tx_iodir));
+
+		// GPINTEN (0x04): Interrupt on change
+		uint8_t tx_gpinten[] = { (uint8_t)(0x40 | (chip << 1)), 0x04, 0xFF, 0xFF };
+		mcp23s17_transfer(&cfg->spi, tx_gpinten, rx_dummy, sizeof(tx_gpinten));
+
+		// INTCON (0x08): 0x00 = Compare against previous pin value
+		uint8_t tx_intcon[] = { (uint8_t)(0x40 | (chip << 1)), 0x08, 0x00, 0x00 };
+		mcp23s17_transfer(&cfg->spi, tx_intcon, rx_dummy, sizeof(tx_intcon));
+
+		// Read GPIO once to clear any initial interrupt state
+		uint8_t tx_gpio[] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
+		mcp23s17_transfer(&cfg->spi, tx_gpio, rx_dummy, sizeof(tx_gpio));
+	}
+
+	// 4. Configure IO_INT GPIO on nRF52840 (pro_micro 8 / P1.00)
+	if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+		gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT);
+		gpio_init_callback(&data->int_cb, kscan_kugel_int_handler, BIT(cfg->int_gpio.pin));
+		gpio_add_callback(cfg->int_gpio.port, &data->int_cb);
+		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_EDGE_FALLING);
+		LOG_INF("IO_INT interrupt configured successfully");
 	}
 
 	LOG_INF("Kugel-1 initialized successfully");
@@ -295,6 +345,44 @@ static int kscan_kugel_init(const struct device *dev)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_PM_DEVICE)
+static int kscan_kugel_pm_action(const struct device *dev, enum pm_device_action action)
+{
+	struct kscan_kugel_data *data = dev->data;
+	const struct kscan_kugel_config *cfg = dev->config;
+
+	switch (action) {
+	case PM_DEVICE_ACTION_SUSPEND:
+		k_work_cancel_delayable(&data->work);
+
+		// Clear pending interrupts on all MCP23S17 chips by reading GPIOs
+		for (uint8_t chip = 0; chip < 3; chip++) {
+			uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
+			uint8_t rx[4] = { 0 };
+			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
+		}
+
+		// Configure int_gpio as wake-up trigger for System OFF (SENSE LOW)
+		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_LOW);
+		}
+		LOG_INF("Kscan Kugel suspended, wake configured on IO_INT");
+		break;
+	case PM_DEVICE_ACTION_RESUME:
+		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_EDGE_FALLING);
+		}
+		data->idle_scan_count = 0;
+		k_work_reschedule(&data->work, K_NO_WAIT);
+		LOG_INF("Kscan Kugel resumed");
+		break;
+	default:
+		return -ENOTSUP;
+	}
+	return 0;
+}
+#endif
+
 #define KSCAN_KUGEL_INIT(n)                                                                      \
 	static struct kscan_kugel_data kscan_kugel_data_##n;                                         \
 	static const struct kscan_kugel_config kscan_kugel_config_##n = {                             \
@@ -303,7 +391,8 @@ static int kscan_kugel_init(const struct device *dev)
 		.row_gpio = GPIO_DT_SPEC_INST_GET_OR(n, row_gpios, {0}),                                \
 		.int_gpio = GPIO_DT_SPEC_INST_GET_OR(n, int_gpios, {0}),                                \
 	};                                                                                           \
-	DEVICE_DT_INST_DEFINE(n, kscan_kugel_init, NULL, &kscan_kugel_data_##n,                      \
+	PM_DEVICE_DT_INST_DEFINE(n, kscan_kugel_pm_action);                                          \
+	DEVICE_DT_INST_DEFINE(n, kscan_kugel_init, PM_DEVICE_DT_INST_GET(n), &kscan_kugel_data_##n,   \
 			      &kscan_kugel_config_##n, POST_KERNEL, 90, &kscan_kugel_api);
 
 DT_INST_FOREACH_STATUS_OKAY(KSCAN_KUGEL_INIT)

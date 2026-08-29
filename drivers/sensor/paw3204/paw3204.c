@@ -13,6 +13,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
 #include "paw3204.h"
 
 LOG_MODULE_REGISTER(paw3204, LOG_LEVEL_INF);
@@ -41,6 +42,7 @@ struct paw3204_data {
 	int scroll_div;
 	int scroll_y_accum;
 	int scroll_x_accum;
+	uint32_t idle_count;
 };
 
 static struct paw3204_data *g_paw_data = NULL;
@@ -202,10 +204,20 @@ static void paw3204_poll(struct k_work *work)
 				input_report_rel(dev, INPUT_REL_X, final_dx, false, K_NO_WAIT);
 				input_report_rel(dev, INPUT_REL_Y, final_dy, true, K_NO_WAIT);
 			}
+			data->idle_count = 0;
+		} else {
+			if (data->idle_count < 100) {
+				data->idle_count++;
+			}
+		}
+	} else {
+		if (data->idle_count < 100) {
+			data->idle_count++;
 		}
 	}
 
-	k_work_reschedule(&data->poll_work, K_MSEC(8));
+	uint32_t next_poll_ms = (data->idle_count >= 20) ? 25 : 8;
+	k_work_reschedule(&data->poll_work, K_MSEC(next_poll_ms));
 }
 
 static int paw3204_init(const struct device *dev)
@@ -219,6 +231,7 @@ static int paw3204_init(const struct device *dev)
 	data->scroll_div = 6;  // Divisor 6: Smooth vertical scrolling
 	data->scroll_y_accum = 0;
 	data->scroll_x_accum = 0;
+	data->idle_count = 0;
 	g_paw_data = data;
 
 	LOG_INF("Initializing Bit Trade One ADTB7M (PAW3204) Trackball Driver...");
@@ -258,6 +271,37 @@ static int paw3204_init(const struct device *dev)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_PM_DEVICE)
+static int paw3204_pm_action(const struct device *dev, enum pm_device_action action)
+{
+	struct paw3204_data *data = dev->data;
+	const struct paw3204_config *cfg = dev->config;
+
+	switch (action) {
+	case PM_DEVICE_ACTION_SUSPEND:
+		k_work_cancel_delayable(&data->poll_work);
+		if (cfg->pow_gpio.port != NULL && gpio_is_ready_dt(&cfg->pow_gpio)) {
+			gpio_pin_set_dt(&cfg->pow_gpio, 1); // Power OFF (Active LOW)
+		}
+		LOG_INF("PAW3204 suspended, power OFF");
+		break;
+	case PM_DEVICE_ACTION_RESUME:
+		if (cfg->pow_gpio.port != NULL && gpio_is_ready_dt(&cfg->pow_gpio)) {
+			gpio_pin_set_dt(&cfg->pow_gpio, 0); // Power ON (Active LOW)
+			k_msleep(50);
+		}
+		paw3204_write_reg(cfg, 0x00, 0xFF);
+		data->idle_count = 0;
+		k_work_reschedule(&data->poll_work, K_MSEC(50));
+		LOG_INF("PAW3204 resumed, power ON");
+		break;
+	default:
+		return -ENOTSUP;
+	}
+	return 0;
+}
+#endif
+
 #define PAW3204_INIT(n)                                                                          \
 	static struct paw3204_data paw3204_data_##n;                                                 \
 	static const struct paw3204_config paw3204_config_##n = {                                    \
@@ -266,7 +310,8 @@ static int paw3204_init(const struct device *dev)
 		.cs_gpio = GPIO_DT_SPEC_INST_GET_OR(n, cs_gpios, {0}),                                   \
 		.pow_gpio = GPIO_DT_SPEC_INST_GET_OR(n, pow_gpios, {0}),                                 \
 	};                                                                                           \
-	DEVICE_DT_INST_DEFINE(n, paw3204_init, NULL, &paw3204_data_##n, &paw3204_config_##n,         \
-			      POST_KERNEL, 95, NULL);
+	PM_DEVICE_DT_INST_DEFINE(n, paw3204_pm_action);                                              \
+	DEVICE_DT_INST_DEFINE(n, paw3204_init, PM_DEVICE_DT_INST_GET(n), &paw3204_data_##n,          \
+			      &paw3204_config_##n, POST_KERNEL, 95, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(PAW3204_INIT)
