@@ -33,7 +33,8 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         paw3204_control_toggle_automouse();
         break;
     case TB_SCRL_TOG:
-        paw3204_control_toggle_scroll_mode();
+        // Momentary scroll: activate scroll mode while key is held
+        paw3204_control_set_scroll_mode(true);
         break;
     default:
         LOG_WRN("Unknown trackball command: %d", binding->param1);
@@ -43,8 +44,24 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
     return 0;
 }
 
+static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
+                                      struct zmk_behavior_binding_event event)
+{
+    switch (binding->param1) {
+    case TB_SCRL_TOG:
+        // Momentary scroll: deactivate scroll mode when key is released
+        paw3204_control_set_scroll_mode(false);
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
 static const struct behavior_driver_api behavior_trackball_driver_api = {
     .binding_pressed = on_keymap_binding_pressed,
+    .binding_released = on_keymap_binding_released,
 };
 
 #define TB_INST(n)                                                                               \

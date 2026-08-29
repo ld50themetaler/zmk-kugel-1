@@ -40,7 +40,7 @@ struct tb_control_state {
 
 static struct tb_control_state g_tb = {
     .speed_level = DEFAULT_SPEED_LEVEL,
-    .automouse_enabled = true,
+    .automouse_enabled = false,
     .automouse_active = false,
     .sniper_active = false,
     .scroll_mode = false,
@@ -254,12 +254,6 @@ static int position_state_listener(const zmk_event_t *eh)
     const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
     if (ev == NULL || !ev->state) {
         return ZMK_EV_EVENT_BUBBLE;
-    }
-
-    // If toggle drag-scroll mode is active, dismiss it on any click or key press
-    if (g_tb.scroll_mode) {
-        g_tb.scroll_mode = false;
-        LOG_INF("Scroll mode dismissed on key/click position %d", ev->position);
     }
 
     // If auto-mouse is active and a non-mouse key is pressed:
