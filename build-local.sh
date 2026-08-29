@@ -36,7 +36,7 @@ west build -p -s /workspace/zmk-cache/zmk/app -d /workspace/zmk-config/build/kug
     -DSHIELD=kugel \
     -DBOARD_ROOT=/workspace/zmk-config \
     -DZMK_CONFIG=/workspace/zmk-config/config \
-    -DZMK_EXTRA_MODULES="/workspace/zmk-config;/workspace/zmk-cache/modules/zmk-feature-non-lipo-battery-management" \
+    -DZMK_EXTRA_MODULES="/workspace/zmk-config;/workspace/zmk-cache/modules/zmk-feature-non-lipo-battery-management;/workspace/zmk-cache/modules/prospector-zmk-module" \
     -DZEPHYR_BASE=/workspace/zmk-cache/zephyr
 
 mkdir -p /workspace/zmk-config/build/artifacts
