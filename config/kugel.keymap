@@ -69,15 +69,24 @@
         };
     };
 
+    combos {
+        compatible = "zmk,combos";
+
+        left_click {
+            bindings = <&mkp MB1>;
+            key-positions = <17 16>;
+        };
+    };
+
     keymap {
         compatible = "zmk,keymap";
 
         default_layer {
             display-name = "Default";
             bindings = <
-&mt LGUI ESC   &kp SINGLE_QUOTE        &kp COMMA  &lt 5 PERIOD     &kp P            &kp Y      &mkp MB1      &kp F  &kp G  &kp C  &kp R     &kp L    &kp SLASH
-&mt LCTRL TAB  &kp A                   &kp O      &mt LCTRL E      &kp U            &kp I      &kp H         &kp J  &kp K  &kp L  &kp SEMI  &kp RET
-&kp LSHFT      &kp SEMICOLON           &kp Q      &kp J            &kp K            &kp X      &kp B         &kp M  &kp W  &kp V  &kp Z
+&mt LGUI ESC   &kp SINGLE_QUOTE        &kp COMMA  &lt 5 PERIOD     &kp P            &kp Y      &mkp MB1      &kp F  &kp G        &kp C  &kp R  &kp L      &kp SLASH
+&mt LCTRL TAB  &kp A                   &kp O      &mt LCTRL E      &kp U            &kp I      &kp D         &kp H  &mt RCTRL T  &kp N  &kp S  &kp MINUS
+&kp LSHFT      &kp SEMICOLON           &kp Q      &kp J            &kp K            &kp X      &kp B         &kp M  &kp W        &kp V  &kp Z
 &mo 4          &mt LEFT_ALT BACKSPACE  &mo 1      &mt LSHFT SPACE  &mt RCTRL ENTER  &mo RAISE  &mt RALT TAB
             >;
         };
