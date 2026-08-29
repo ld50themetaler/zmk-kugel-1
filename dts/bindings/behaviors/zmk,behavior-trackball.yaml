@@ -1,0 +1,8 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: Trackball management behavior
+
+compatible: "zmk,behavior-trackball"
+
+include: one_param.yaml

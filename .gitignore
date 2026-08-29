@@ -1,0 +1,13 @@
+# Build output & Scratch scripts
+build/
+.west/
+.cache/
+scratch/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~

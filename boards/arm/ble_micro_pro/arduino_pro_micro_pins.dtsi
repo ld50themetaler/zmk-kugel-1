@@ -1,0 +1,51 @@
+/*
+ * Copyright (c) 2024 The ZMK Contributors
+ * SPDX-License-Identifier: MIT
+ */
+
+/ {
+	pro_micro: connector {
+		compatible = "arduino-pro-micro";
+		#gpio-cells = <2>;
+		gpio-map-mask = <0xffffffff 0xffffffc0>;
+		gpio-map-pass-thru = <0 0x3f>;
+		gpio-map
+			= <0 0 &gpio0 11 0>		/* D0 (RX / PIN2) */
+			, <1 0 &gpio0  8 0>		/* D1 (TX / PIN1) */
+			, <2 0 &gpio0 18 0>		/* D2 (PIN5) */
+			, <3 0 &gpio0 16 0>		/* D3 (PIN6) */
+			, <4 0 &gpio0 19 0>		/* D4 (PIN7) */
+			, <5 0 &gpio0 20 0>		/* D5 (PIN8 / IO_RESET) */
+			, <6 0 &gpio0 22 0>		/* D6 (PIN9) */
+			, <7 0 &gpio0 23 0>		/* D7 (PIN10 / TB_POW) */
+			, <8 0 &gpio1  0 0>		/* D8 (PIN11 / IO_INT) */
+			, <9 0 &gpio1  3 0>		/* D9 (PIN12 / TB_INT) */
+			, <10 0 &gpio0  9 0>	/* D10 (PIN13) */
+			, <14 0 &gpio1 15 0>	/* D14 (PIN15 / MISO) */
+			, <15 0 &gpio1 14 0>	/* D15 (PIN16 / SCK) */
+			, <16 0 &gpio0 10 0>	/* D16 (PIN14 / MOSI) */
+			, <18 0 &gpio0  3 0>	/* D18 / A0 (PIN17 / CS_TB) */
+			, <19 0 &gpio0 30 0>	/* D19 / A1 (PIN18 / CS_IO) */
+			, <20 0 &gpio0  0 0>	/* D20 / A2 (PIN19) */
+			, <21 0 &gpio0  5 0>	/* D21 / A3 (PIN20) */
+			;
+	};
+
+	pro_micro_a: connector_a {
+		compatible = "arduino-pro-micro";
+		#gpio-cells = <2>;
+		gpio-map-mask = <0xffffffff 0xffffffc0>;
+		gpio-map-pass-thru = <0 0x3f>;
+		gpio-map
+			= <0 0 &gpio0  3 0>	/* D18/A0 (PIN17 / CS_TB) */
+			, <1 0 &gpio0 30 0>	/* D19/A1 (PIN18 / CS_IO) */
+			, <2 0 &gpio0  0 0>	/* D20/A2 (PIN19) */
+			, <3 0 &gpio0  5 0>	/* D21/A3 (PIN20) */
+			;
+	};
+};
+
+pro_micro_d: &pro_micro {};
+pro_micro_i2c: &i2c0 {};
+pro_micro_spi: &spi1 {};
+pro_micro_serial: &uart0 {};

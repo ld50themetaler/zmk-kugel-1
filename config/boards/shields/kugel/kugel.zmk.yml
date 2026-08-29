@@ -1,0 +1,9 @@
+file_format: "1"
+id: kugel
+name: Kugel-1
+type: shield
+url: https://github.com/sekigon-gonnoc/Kugel-doc
+requires: [pro_micro]
+features:
+  - keys
+  - pointing

@@ -1,0 +1,21 @@
+name: Build ZMK Firmware
+
+on:
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+      - "boards/**"
+      - "config/**"
+      - "drivers/**"
+      - "dts/**"
+      - "include/**"
+      - "build.yaml"
+      - "CMakeLists.txt"
+      - "Kconfig"
+      - "zephyr/**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+
+if BOARD_BLE_MICRO_PRO
+
+config BOARD
+	default "ble_micro_pro"
+
+endif

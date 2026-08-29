@@ -1,0 +1,51 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: ADNS-7530 optical/laser trackball sensor
+
+compatible: "adns,adns7530"
+
+include: spi-device.yaml
+
+properties:
+  pow-gpios:
+    type: phandle-array
+    required: false
+    description: Power enable GPIO pin (Active LOW)
+
+  irq-gpios:
+    type: phandle-array
+    required: false
+    description: Motion interrupt GPIO pin
+
+  cpi:
+    type: int
+    default: 800
+    description: Sensor resolution in counts per inch
+
+  evt-type:
+    type: int
+    default: 2 # INPUT_EV_REL
+    description: Input event type to generate
+
+  x-input-code:
+    type: int
+    default: 0 # INPUT_REL_X
+    description: Input event code for X movement
+
+  y-input-code:
+    type: int
+    default: 1 # INPUT_REL_Y
+    description: Input event code for Y movement
+
+  invert-x:
+    type: boolean
+    description: Invert X axis motion
+
+  invert-y:
+    type: boolean
+    description: Invert Y axis motion
+
+  swap-xy:
+    type: boolean
+    description: Swap X and Y axes

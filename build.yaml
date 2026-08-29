@@ -1,0 +1,5 @@
+# Targets to build with local Docker / GitHub Actions
+---
+include:
+  - board: ble_micro_pro/nrf52840
+    shield: kugel

@@ -1,0 +1,21 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+menuconfig ADNS7530
+	bool "ADNS7530 optical/laser trackball sensor"
+	default y
+	depends on DT_HAS_ADNS_ADNS7530_ENABLED
+	select SPI
+	select INPUT
+	help
+	  Enable driver for ADNS7530 optical mouse/trackball sensor.
+
+if ADNS7530
+
+config ADNS7530_POLL_INTERVAL_MS
+	int "Polling interval in milliseconds"
+	default 5
+	help
+	  Time between sensor polling cycles if interrupt is not active.
+
+endif # ADNS7530

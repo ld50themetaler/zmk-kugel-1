@@ -1,0 +1,24 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: Kugel-1 Keyboard Matrix Scanner (MCP23S17 x3 Direct Scan)
+
+compatible: "zmk,kscan-kugel"
+
+include: [kscan.yaml, spi-device.yaml]
+
+properties:
+  reset-gpios:
+    type: phandle-array
+    required: false
+    description: Reset GPIO pin for MCP23S17 (Active LOW)
+
+  row-gpios:
+    type: phandle-array
+    required: false
+    description: Common row ground GPIO pin (IO_ROW / Pro Micro 6 / P0.22)
+
+  int-gpios:
+    type: phandle-array
+    required: false
+    description: Shared interrupt GPIO pin from MCP23S17

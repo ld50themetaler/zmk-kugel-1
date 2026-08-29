@@ -1,0 +1,19 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+rsource "drivers/sensor/adns7530/Kconfig"
+
+config PAW3204
+	bool "Bit Trade One ADTB7M PAW3204 Trackball Driver"
+	default y
+	select INPUT
+	help
+	  Enable Bit Trade One ADTB7M PAW3204 1u trackball sensor driver.
+
+config KSCAN_KUGEL
+	bool "Kugel-1 MCP23S17 Kscan driver"
+	default y
+	depends on SPI
+	select KSCAN
+	help
+	  Enable custom kscan driver for Kugel-1 using 3x MCP23S17 with HAEN.

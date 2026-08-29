@@ -1,0 +1,24 @@
+description: Bit Trade One ADTB7M PAW3204 Optical Trackball Sensor
+
+compatible: "bto,paw3204"
+
+properties:
+  sclk-gpios:
+    type: phandle-array
+    required: true
+    description: Clock GPIO pin
+
+  data-gpios:
+    type: phandle-array
+    required: true
+    description: Bi-directional SDIO data GPIO pin
+
+  cs-gpios:
+    type: phandle-array
+    required: false
+    description: Chip select GPIO pin
+
+  pow-gpios:
+    type: phandle-array
+    required: false
+    description: Power enable GPIO pin
