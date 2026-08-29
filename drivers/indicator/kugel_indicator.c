@@ -127,6 +127,9 @@ static void indicator_work_handler(struct k_work *work)
     case MODE_IDLE:
     default:
         led_set(false);
+        if (!zmk_ble_active_profile_is_connected()) {
+            trigger_advertising();
+        }
         break;
     }
 }
@@ -261,7 +264,7 @@ static int kugel_indicator_init(void)
     if (initial_soc > 0) {
         trigger_battery_display(initial_soc);
     } else {
-        k_work_reschedule(&g_ind.work, K_MSEC(800));
+        trigger_advertising();
     }
 
     return 0;
