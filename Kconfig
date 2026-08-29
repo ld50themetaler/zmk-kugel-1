@@ -37,19 +37,19 @@ if ZMK_NON_LIPO_BATTERY_MANAGEMENT
 
 config ZMK_NON_LIPO_MIN_MV
 	int "Minimum voltage in millivolts"
-	default 1000
+	default 800
 	help
 	  The minimum voltage level for the battery, corresponding to 0% charge.
 
 config ZMK_NON_LIPO_MAX_MV
 	int "Maximum voltage in millivolts"
-	default 1350
+	default 1300
 	help
 	  The maximum voltage level for the battery, corresponding to 100% charge.
 
 config ZMK_NON_LIPO_LOW_MV
 	int "Low battery threshold in millivolts"
-	default 900
+	default 700
 	help
 	  The voltage level at which the system will power off to prevent damage.
 

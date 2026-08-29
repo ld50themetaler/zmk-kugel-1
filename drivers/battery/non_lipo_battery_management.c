@@ -137,32 +137,35 @@ static void check_voltage_and_shutdown(uint16_t millivolts) {
     }
 }
 
-static uint8_t calc_aa_battery_pct(uint16_t mv) {
-    // Single AA battery (Alkaline / NiMH / Eneloop)
-    // 1300mV+ -> 100%
-    // 800mV-  -> 0%
-    const uint16_t max_mv = 1300;
-    const uint16_t min_mv = 800;
-
-    if (mv >= max_mv) {
-        return 100;
-    } else if (mv <= min_mv) {
-        return 0;
-    }
-
-    return (uint8_t)(((uint32_t)(mv - min_mv) * 100) / (max_mv - min_mv));
-}
-
 static int non_lipo_sample_fetch(const struct device *dev, enum sensor_channel chan) {
     struct non_lipo_data *drv_data = dev->data;
     struct adc_sequence *as = &drv_data->as;
 
+    // Make sure selected channel is supported
     if (chan != SENSOR_CHAN_GAUGE_VOLTAGE && chan != SENSOR_CHAN_GAUGE_STATE_OF_CHARGE &&
         chan != SENSOR_CHAN_ALL) {
+        LOG_DBG("Selected channel is not supported: %d.", chan);
         return -ENOTSUP;
     }
 
-    int rc = adc_read(drv_data->adc, as);
+    int rc = 0;
+
+#if DT_INST_NODE_HAS_PROP(0, power_gpios)
+    const struct non_lipo_config *drv_cfg = dev->config;
+    // Enable power before sampling
+    rc = gpio_pin_set_dt(&drv_cfg->power, 1);
+
+    if (rc != 0) {
+        LOG_DBG("Failed to enable ADC power GPIO: %d", rc);
+        return rc;
+    }
+
+    // Wait for stabilization
+    k_sleep(K_MSEC(10));
+#endif
+
+    // Read ADC
+    rc = adc_read(drv_data->adc, as);
     as->calibrate = false;
 
     if (rc == 0) {
@@ -171,25 +174,31 @@ static int non_lipo_sample_fetch(const struct device *dev, enum sensor_channel c
         adc_raw_to_millivolts(adc_ref_internal(drv_data->adc), drv_data->acc.gain, as->resolution,
                               &val);
 
-        uint16_t mv = (val > 0) ? val : 0;
-        drv_data->millivolts = mv;
-
-        if (mv > 400) {
-            // Valid battery voltage read from AIN3!
-            drv_data->state_of_charge = calc_aa_battery_pct(mv);
-        } else if (zmk_usb_is_powered()) {
-            // On USB power, AA battery circuit may be disconnected/0V, show 100%
-            drv_data->state_of_charge = 100;
-        } else {
-            drv_data->state_of_charge = 0;
-        }
+        uint16_t millivolts = val;
+        LOG_DBG("ADC raw %d ~ %d mV", drv_data->adc_raw, millivolts);
+        
+        drv_data->millivolts = millivolts;
+        drv_data->state_of_charge = non_lipo_mv_to_pct(millivolts);
+        
+        LOG_DBG("Battery: %d mV, %d%%", millivolts, drv_data->state_of_charge);
+        
+        // Check if we need to shut down due to low voltage
+        check_voltage_and_shutdown(millivolts);
     } else {
-        if (zmk_usb_is_powered()) {
-            drv_data->state_of_charge = 100;
-        }
+        LOG_DBG("Failed to read ADC: %d", rc);
     }
 
-    return 0;
+#if DT_INST_NODE_HAS_PROP(0, power_gpios)
+    // Disable power GPIO if present
+    int rc2 = gpio_pin_set_dt(&drv_cfg->power, 0);
+
+    if (rc2 != 0) {
+        LOG_DBG("Failed to disable ADC power GPIO: %d", rc2);
+        return rc2;
+    }
+#endif
+
+    return rc;
 }
 
 static int non_lipo_channel_get(const struct device *dev, enum sensor_channel chan,
@@ -280,7 +289,7 @@ static int non_lipo_init(const struct device *dev) {
     k_work_schedule(&adv_timeout_work, K_MSEC(10000));
 #endif
 
-    return 0;
+    return rc;
 }
 
 static struct non_lipo_data non_lipo_data = {
