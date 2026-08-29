@@ -355,21 +355,36 @@ static int kscan_kugel_pm_action(const struct device *dev, enum pm_device_action
 	case PM_DEVICE_ACTION_SUSPEND:
 		k_work_cancel_delayable(&data->work);
 
-		// Clear pending interrupts on all MCP23S17 chips by reading GPIOs
+		// 1. Ensure row_gpio (P0.22 common ground) is firmly driven to LOW (GND)
+		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
+		}
+
+		// 2. Clear pending interrupts on all MCP23S17 chips by reading GPIOs
 		for (uint8_t chip = 0; chip < 3; chip++) {
 			uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
 			uint8_t rx[4] = { 0 };
 			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
 		}
 
-		// Configure int_gpio as wake-up trigger for System OFF (SENSE LOW)
+		// 3. Properly detach GPIOTE edge interrupt channel and arm SENSE LOW for System OFF
 		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			// First, disable interrupt to release GPIOTE channel (IN event)
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_DISABLE);
+
+			// Then configure pin with pull-up and SENSE LOW (PORT event) for System OFF wakeup
+			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
 			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_LOW);
 		}
-		LOG_INF("Kscan Kugel suspended, wake configured on IO_INT");
+		LOG_INF("Kscan Kugel suspended, wake armed on IO_INT");
 		break;
 	case PM_DEVICE_ACTION_RESUME:
+		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
+		}
 		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_DISABLE);
+			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
 			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_EDGE_FALLING);
 		}
 		data->idle_scan_count = 0;
