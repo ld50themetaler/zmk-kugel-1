@@ -1,0 +1,17 @@
+description: ZMK Non-LiPo Battery Monitoring device
+
+compatible: "zmk,non-lipo-battery"
+
+include: base.yaml
+
+properties:
+  io-channels:
+    required: true
+    description: |
+      ADC channel for battery voltage measurement.
+
+  power-gpios:
+    type: phandle-array
+    description: |
+      GPIO to enable power to the voltage divider circuit.
+      Optional. If not provided, the voltage divider is assumed to be always powered.

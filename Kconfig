@@ -24,3 +24,41 @@ config KUGEL_INDICATOR
 	help
 	  Enable QMK-equivalent PCB LED status indicator on P0.08 (D100).
 
+config ZMK_NON_LIPO_BATTERY_MANAGEMENT
+	bool "Non-LiPo battery monitoring and management"
+	default y
+	select ZMK_SLEEP
+	select ADC
+	select ADC_NRFX_SAADC
+	help
+	  Enable support for non-LiPo batteries (such as alkaline or NiMH).
+
+if ZMK_NON_LIPO_BATTERY_MANAGEMENT
+
+config ZMK_NON_LIPO_MIN_MV
+	int "Minimum voltage in millivolts"
+	default 1000
+	help
+	  The minimum voltage level for the battery, corresponding to 0% charge.
+
+config ZMK_NON_LIPO_MAX_MV
+	int "Maximum voltage in millivolts"
+	default 1350
+	help
+	  The maximum voltage level for the battery, corresponding to 100% charge.
+
+config ZMK_NON_LIPO_LOW_MV
+	int "Low battery threshold in millivolts"
+	default 900
+	help
+	  The voltage level at which the system will power off to prevent damage.
+
+config ZMK_NON_LIPO_ADV_SLEEP_TIMEOUT
+	int "Time in milliseconds after which the device will sleep during advertising"
+	default 0
+	help
+	  If advertising continues for this duration, the device will enter sleep mode.
+	  Set to 0 to disable this feature.
+
+endif # ZMK_NON_LIPO_BATTERY_MANAGEMENT
+

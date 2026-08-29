@@ -19,3 +19,7 @@ endif()
 if(CONFIG_KUGEL_INDICATOR)
     zephyr_library_sources(drivers/indicator/kugel_indicator.c)
 endif()
+
+if(CONFIG_ZMK_NON_LIPO_BATTERY_MANAGEMENT)
+    zephyr_library_sources(drivers/battery/non_lipo_battery_management.c)
+endif()
