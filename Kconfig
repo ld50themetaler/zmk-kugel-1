@@ -17,3 +17,10 @@ config KSCAN_KUGEL
 	select KSCAN
 	help
 	  Enable custom kscan driver for Kugel-1 using 3x MCP23S17 with HAEN.
+
+config KUGEL_INDICATOR
+	bool "Kugel-1 PCB Status LED Indicator"
+	default y
+	help
+	  Enable QMK-equivalent PCB LED status indicator on P0.08 (D100).
+

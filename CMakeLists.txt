@@ -15,3 +15,7 @@ endif()
 if(CONFIG_KSCAN_KUGEL)
     zephyr_library_sources(drivers/kscan/kscan_kugel.c)
 endif()
+
+if(CONFIG_KUGEL_INDICATOR)
+    zephyr_library_sources(drivers/indicator/kugel_indicator.c)
+endif()
