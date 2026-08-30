@@ -137,3 +137,18 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
 2. リセットボタンを素早く **2回押し**（ダブルタップ）して、ブートローダーモード（マスストレージドライブ）に入ります。
 3. PC に認識されたドライブ（**`BLEMICROPRO`**）に、生成された `build/artifacts/kugel_ble_micro_pro.uf2` をドラッグ＆ドロップします。
 4. 書き込みが完了すると、自動的に再起動して Kugel-1 として動作を開始します。
+
+---
+
+## ⚠️ 電源管理とスリープに関する技術メモ (Known Issue / Memo)
+
+### ZMK Studio と `CONFIG_ZMK_SLEEP` の共存不具合について
+現在、Zephyr 4.1 ベースの ZMK main において、**ZMK Studio（`CONFIG_ZMK_STUDIO=y`）とディープスリープ（`CONFIG_ZMK_SLEEP=y`）を同時に有効にすると、スリープ移行時に電源管理（`pm.c` / `pm_device_slots`）のメモリ違反によりマイコンがハングアップしてキー復帰できなくなる不具合**（上流 GitHub Issues #3195, #3207）が存在します。
+
+そのため、現在の本リポジトリでは安定運用のために **`CONFIG_ZMK_SLEEP=n`（ディープスリープオフ）** に設定し、**System ON 省電力アイドル待機（WFI）** で運用しています。
+- **電池持ちへの影響**: アイドル待機（30秒放置で省電力モード・50msスキャン待機へ移行）でも、単三乾電池（エネループ等）1本で **日常使用で約 3 ヶ月、完全放置で約 5〜6 ヶ月** 動作します（旧 QMK ファームウェアと同等の運用形態です）。
+- **メリット**: スリープによる Bluetooth 切断や復帰遅延がなく、キーを押した瞬間に遅延ゼロ（1ミリ秒）で即座に入力されます。
+
+### 将来のアップデート方針
+ZMK / Zephyr 上流で上記バグ（Issue #3195）が修正され、ZMK Studio とディープスリープの共存が安定動作するようになった段階で、`config/boards/shields/kugel/kugel.conf` の **`CONFIG_ZMK_SLEEP=y`** を再有効化する予定です。
+
