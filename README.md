@@ -21,7 +21,7 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
   - **ポインター加速度（Mouse Acceleration）**: 微小移動時の精密操作とフリック時の高速移動を両立
   - **スクロール軸ロック**: 縦スクロール時の横ブレ暴発を防止
 - **単三乾電池（1本）バッテリー残量管理**:
-  - `zmk-feature-non-lipo-battery-management` 公式モジュールを `west.yml` 経由で統合
+  - `zmk-feature-non-lipo-battery-management` 外部モジュールを `west.yml` 経由で統合
   - QMK 純正設定に合わせた電圧測定レンジ（800mV = 0%、1300mV = 100%）により、単三アルカリ乾電池および NiMH（エネループ）の正確な残量を Windows / OS の Bluetooth Battery Service (BAS) へリアルタイム報告
   - USB 接続時は保護回路による電圧降下を検出し、100%（外部電源駆動）としてスマートにフォールバック表示
 - **QMK 完全互換 PCB ステータス LED (D100 / P0.08)**:
