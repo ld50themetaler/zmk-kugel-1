@@ -47,6 +47,7 @@ struct kscan_kugel_data {
 	uint16_t last_raw[3];
 	uint32_t scan_count;
 	uint32_t idle_scan_count;
+	bool int_enabled;
 	bool settings_loaded;
 	bool is_connected;
 	int led_blink_count;
@@ -144,6 +145,14 @@ static void check_touch_reset(struct kscan_kugel_data *data)
 static void kscan_kugel_int_handler(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins)
 {
 	struct kscan_kugel_data *data = CONTAINER_OF(cb, struct kscan_kugel_data, int_cb);
+	const struct kscan_kugel_config *cfg = data->dev->config;
+
+	// Temporarily disable level interrupt while actively scanning keys to avoid repeated interrupts
+	if (data->int_enabled && cfg->int_gpio.port != NULL) {
+		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_DISABLE);
+		data->int_enabled = false;
+	}
+
 	data->idle_scan_count = 0;
 	k_work_reschedule(&data->work, K_NO_WAIT);
 }
@@ -205,9 +214,15 @@ static void kscan_kugel_work_handler(struct k_work *work)
 		}
 	}
 
+	// When returning to stable idle, re-arm GPIO_INT_LEVEL_ACTIVE (SENSE LOW)
+	if (data->idle_scan_count >= 10 && !data->int_enabled && cfg->int_gpio.port != NULL) {
+		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
+		data->int_enabled = true;
+	}
+
 	// Active (pressed/releasing): 5ms scan rate
 	// Idle (stable unpressed): 50ms scan rate (IO_INT interrupt instantly wakes back to 5ms)
-	uint32_t next_scan_ms = (data->idle_scan_count >= 20) ? 50 : 5;
+	uint32_t next_scan_ms = (data->idle_scan_count >= 10) ? 50 : 5;
 	k_work_reschedule(&data->work, K_MSEC(next_scan_ms));
 }
 
@@ -331,8 +346,9 @@ static int kscan_kugel_init(const struct device *dev)
 		gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT);
 		gpio_init_callback(&data->int_cb, kscan_kugel_int_handler, BIT(cfg->int_gpio.pin));
 		gpio_add_callback(cfg->int_gpio.port, &data->int_cb);
-		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_EDGE_FALLING);
-		LOG_INF("IO_INT interrupt configured successfully");
+		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
+		data->int_enabled = true;
+		LOG_INF("IO_INT interrupt configured with GPIO_INT_LEVEL_ACTIVE (SENSE LOW)");
 	}
 
 	LOG_INF("Kugel-1 initialized successfully");
@@ -349,44 +365,13 @@ static int kscan_kugel_init(const struct device *dev)
 static int kscan_kugel_pm_action(const struct device *dev, enum pm_device_action action)
 {
 	struct kscan_kugel_data *data = dev->data;
-	const struct kscan_kugel_config *cfg = dev->config;
 
 	switch (action) {
 	case PM_DEVICE_ACTION_SUSPEND:
 		k_work_cancel_delayable(&data->work);
-
-		// 1. Ensure row_gpio (P0.22 common ground) is firmly driven to LOW (GND)
-		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
-			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
-		}
-
-		// 2. Clear pending interrupts on all MCP23S17 chips by reading GPIOs
-		for (uint8_t chip = 0; chip < 3; chip++) {
-			uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
-			uint8_t rx[4] = { 0 };
-			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
-		}
-
-		// 3. Properly detach GPIOTE edge interrupt channel and arm SENSE LOW for System OFF
-		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
-			// First, disable interrupt to release GPIOTE channel (IN event)
-			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_DISABLE);
-
-			// Then configure pin with pull-up and SENSE LOW (PORT event) for System OFF wakeup
-			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
-			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_LOW);
-		}
-		LOG_INF("Kscan Kugel suspended, wake armed on IO_INT");
+		LOG_INF("Kscan Kugel suspended");
 		break;
 	case PM_DEVICE_ACTION_RESUME:
-		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
-			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
-		}
-		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
-			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_DISABLE);
-			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
-			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_EDGE_FALLING);
-		}
 		data->idle_scan_count = 0;
 		k_work_reschedule(&data->work, K_NO_WAIT);
 		LOG_INF("Kscan Kugel resumed");

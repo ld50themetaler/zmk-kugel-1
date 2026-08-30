@@ -22,3 +22,8 @@ properties:
     type: phandle-array
     required: false
     description: Shared interrupt GPIO pin from MCP23S17
+
+  wakeup-source:
+    type: boolean
+    required: false
+    description: Enable wakeup from deep sleep via IO_INT
