@@ -24,50 +24,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          body: |
-            ## 🚀 v1.0.0 について (About Release v1.0.0)
-
-            Kugel-1（BLE Micro Pro 搭載）用の ZMK ファームウェア公式リリースです。
-            従来のディープスリープ（System OFF）復帰時に発生していたハングアップを根本解消し、**「復帰遅延ゼロ（1ms）」の System ON 省電力アイドル待機** を実現しました。
-
-            ---
-
-            ## 📖 v0.1.0 の概要 (Baseline Overview)
-
-            初期バージョン（v0.1.0）では、Kugel-1 の基本ハードウェア対応および省電力設計が実装されました：
-            - **MCP23S17 Kscan**: 3個の MCP23S17（SPI接続）による 43キーダイレクトスキャン
-            - **PAW3204 トラックボール**: 基本ポインティング動作および Sleep 1/2 省電力対応
-            - **電源構成**: nRF52840 内部 DCDC コンバータの有効化、単三電池残量監視（`non_lipo_battery_management`）
-            - **ZMK Studio**: 物理キーレイアウト定義およびリアルタイムキーマップ編集への初期対応
-            - **ディープスリープ**: `CONFIG_ZMK_SLEEP=y` による完全電源断（System OFF）
-
-            ---
-
-            ## 📋 v1.0.0 チェンジログ (Changelog since v0.1.0)
-
-            ### 1. 電源管理とスリープ運用の刷新 (`CONFIG_ZMK_SLEEP=n`)
-            - **System ON 省電力アイドル待機モードの採用**:
-              - Zephyr 4.1 / ZMK main における既知の不具合（ZMK Studio とディープスリープ共存時に `pm.c` メモリ障害でハングアップする問題: Issues #3195, #3207）を回避するため、`CONFIG_ZMK_SLEEP=n` に設定。
-              - アイドル待機（30秒放置で省電力待機・50msスキャンへ移行）でも、単三電池（エネループ等）1本で **日常使用で約 3 ヶ月、完全放置で約 5〜6 ヶ月** の長寿命バッテリー運用を維持（旧 QMK ファームウェアと同等の運用形態）。
-              - ディープスリープ復帰時の Bluetooth 再接続遅延（2〜3秒）や復帰失敗リスクを完全排除し、**放置後もキーを押した瞬間に 1 ミリ秒で即座に入力反映**。
-
-            ### 2. ハードウェア・キースキャンの安定化
-            - **MCP23S17 アイドル時ラッチ解除 & プルダウン保持 (`dab6ea7`)**:
-              - キースキャンが安定待機に入った際、`IO_ROW` ピンを確実にプルダウン（0V/GND）で保持し、3 個の MCP23S17 の未処理割り込みラッチを明示的にクリアするシーケンスを実装。
-            - **ZMK 公式 wakeup-source アーキテクチャの準拠 (`a934bf0`)**:
-              - キースキャンドライバを ZMK 標準の `wakeup-source` および LEVEL 割り込み構造に整合。
-
-            ### 3. バッテリー管理と保護機能の完全維持 (`2831b2b`)
-            - `CONFIG_ZMK_NON_LIPO_LOW_MV=700`: 電圧低下時の保護閾値を維持。
-            - `CONFIG_ZMK_NON_LIPO_ADV_SLEEP_TIMEOUT=180000`: 未接続アドバタイズタイムアウトを維持。
-            - バッテリー残量報告（800mV = 0%、1300mV = 100%）が Windows / OS の Bluetooth Battery Service (BAS) へ正常にレポートされます。
-
-            ### 4. ドキュメント整備と CI/CD リリース自動化
-            - **README.md の技術メモ明記 (`8158051`)**:
-              - ZMK Studio とスリープの共存バグの背景、および将来 ZMK 上流で修正された際に `CONFIG_ZMK_SLEEP=y` を再有効化するロードマップを記録。
-            - **GitHub Actions 自動リリース (`48dde01`)**:
-              - タグプッシュ時に自動的にファームウェア（`.uf2`）をビルドして GitHub Releases へアタッチする CI/CD ワークフローを導入。
-
-            ---
-            **Full Changelog**: https://github.com/ld50themetaler/zmk-kugel-1/compare/v0.1.0...v1.0.0
+          generate_release_notes: true
           files: firmware/**/*.uf2
