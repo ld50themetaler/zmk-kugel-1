@@ -214,8 +214,20 @@ static void kscan_kugel_work_handler(struct k_work *work)
 		}
 	}
 
-	// When returning to stable idle, re-arm GPIO_INT_LEVEL_ACTIVE (SENSE LOW)
+	// When returning to stable idle, clear MCP23S17 interrupts and re-arm GPIO_INT_LEVEL_ACTIVE (SENSE LOW)
 	if (data->idle_scan_count >= 10 && !data->int_enabled && cfg->int_gpio.port != NULL) {
+		// Read GPIO on all 3 chips to explicitly clear any pending interrupt latches
+		for (uint8_t chip = 0; chip < 3; chip++) {
+			uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
+			uint8_t rx[4] = { 0 };
+			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
+		}
+
+		// Ensure IO_ROW holds 0V (GND) with pull-down
+		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+		}
+
 		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
 		data->int_enabled = true;
 	}
@@ -295,10 +307,9 @@ static int kscan_kugel_init(const struct device *dev)
 		k_msleep(20);
 	}
 
-	// 2. Drive common row ground (P0.22) to LOW
+	// 2. Drive common row ground (P0.22) to LOW with pull-down retention
 	if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
-		gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT);
-		gpio_pin_set_raw(cfg->row_gpio.port, cfg->row_gpio.pin, 0);
+		gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
 	}
 
 	// 3. MCP23S17 Initialization (Broadcast & Individual)
@@ -365,11 +376,30 @@ static int kscan_kugel_init(const struct device *dev)
 static int kscan_kugel_pm_action(const struct device *dev, enum pm_device_action action)
 {
 	struct kscan_kugel_data *data = dev->data;
+	const struct kscan_kugel_config *cfg = dev->config;
 
 	switch (action) {
 	case PM_DEVICE_ACTION_SUSPEND:
 		k_work_cancel_delayable(&data->work);
-		LOG_INF("Kscan Kugel suspended");
+
+		// Ensure row_gpio maintains 0V (GND) via pull-down during System OFF
+		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+		}
+
+		// Read GPIO on all 3 chips to explicitly clear any pending interrupt latches
+		for (uint8_t chip = 0; chip < 3; chip++) {
+			uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
+			uint8_t rx[4] = { 0 };
+			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
+		}
+
+		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
+			data->int_enabled = true;
+		}
+
+		LOG_INF("Kscan Kugel suspended, wake armed and latches cleared");
 		break;
 	case PM_DEVICE_ACTION_RESUME:
 		data->idle_scan_count = 0;
