@@ -257,11 +257,6 @@ static int paw3204_init(const struct device *dev)
 	uint8_t pid = paw3204_read_reg(cfg, REG_PID1);
 	LOG_INF("Bit Trade One ADTB7M (PAW3204) Product ID: 0x%02X (expected 0x30)", pid);
 
-	// Configure Hardware Resolution to 1600 CPI (Reg 0x05 Operation_Mode, bits [2:0] = 110b)
-	paw3204_write_reg(cfg, 0x05, 0x06);
-	uint8_t op_mode = paw3204_read_reg(cfg, 0x05);
-	LOG_INF("PAW3204 Resolution configured to 1600 CPI (Reg 0x05 = 0x%02X)", op_mode);
-
 	// Recover data line
 	paw3204_write_reg(cfg, 0x00, 0xFF);
 
