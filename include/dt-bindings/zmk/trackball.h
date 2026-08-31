@@ -11,5 +11,7 @@
 #define TB_AM_TOG   3
 #define TB_SCRL_TOG 4
 #define TB_SCRL_MO  4
+#define TB_SCRL_UP  5
+#define TB_SCRL_DN  6
 
 #endif /* DT_BINDINGS_ZMK_TRACKBALL_H_ */

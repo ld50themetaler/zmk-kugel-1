@@ -21,13 +21,27 @@
 LOG_MODULE_REGISTER(paw3204_control, LOG_LEVEL_INF);
 
 // Default Configuration Constants
-#define DEFAULT_SPEED_LEVEL 2        // Level 2 = Normal (div 2)
+#define DEFAULT_SPEED_LEVEL 3        // Level 3 = Normal (1.0x)
+#define MAX_SPEED_LEVEL 6
+#define DEFAULT_SCROLL_LEVEL 3       // Level 3 = Normal (div 20)
+#define MAX_SCROLL_LEVEL 6
 #define DEFAULT_AUTOMOUSE_ENABLE 1   // Enabled by default
 #define DEFAULT_AUTOMOUSE_TIMEOUT_MS 800
 #define SNIPER_SPEED_DIV 6           // 3x slower than normal (div 6)
 
+// Scroll Divisor Lookup Table (Level 1 to 6)
+static const uint8_t s_scroll_div_table[MAX_SCROLL_LEVEL] = {
+    36, // Level 1: Very Slow / Ultra Smooth
+    28, // Level 2: Slow / Smooth
+    20, // Level 3: Normal / Balanced (Default)
+    15, // Level 4: Moderate / Responsive
+    10, // Level 5: Fast
+    6,  // Level 6: Ultra Fast (Legacy div 6)
+};
+
 struct tb_control_state {
-    uint8_t speed_level;       // 1 (fast, div 1) to 4 (slow, div 4)
+    uint8_t speed_level;       // 1 (2.0x) to 6 (0.25x)
+    uint8_t scroll_level;      // 1 (div 36) to 6 (div 6)
     bool automouse_enabled;
     bool automouse_active;
     bool sniper_active;
@@ -40,6 +54,7 @@ struct tb_control_state {
 
 static struct tb_control_state g_tb = {
     .speed_level = DEFAULT_SPEED_LEVEL,
+    .scroll_level = DEFAULT_SCROLL_LEVEL,
     .automouse_enabled = false,
     .automouse_active = false,
     .sniper_active = false,
@@ -62,10 +77,25 @@ static int tb_settings_set(const char *name, size_t len, settings_read_cb read_c
         }
         rc = read_cb(cb_arg, &g_tb.speed_level, sizeof(g_tb.speed_level));
         if (rc >= 0) {
-            if (g_tb.speed_level < 1 || g_tb.speed_level > 4) {
+            if (g_tb.speed_level < 1 || g_tb.speed_level > MAX_SPEED_LEVEL) {
                 g_tb.speed_level = DEFAULT_SPEED_LEVEL;
             }
             LOG_INF("Loaded tb/speed: %d", g_tb.speed_level);
+            return 0;
+        }
+        return rc;
+    }
+
+    if (settings_name_steq(name, "scrl", &next) && !next) {
+        if (len != sizeof(g_tb.scroll_level)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &g_tb.scroll_level, sizeof(g_tb.scroll_level));
+        if (rc >= 0) {
+            if (g_tb.scroll_level < 1 || g_tb.scroll_level > MAX_SCROLL_LEVEL) {
+                g_tb.scroll_level = DEFAULT_SCROLL_LEVEL;
+            }
+            LOG_INF("Loaded tb/scrl: %d (div %d)", g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1]);
             return 0;
         }
         return rc;
@@ -94,8 +124,10 @@ static void settings_save_work_handler(struct k_work *work)
 {
     uint8_t am_val = g_tb.automouse_enabled ? 1 : 0;
     settings_save_one("tb/speed", &g_tb.speed_level, sizeof(g_tb.speed_level));
+    settings_save_one("tb/scrl", &g_tb.scroll_level, sizeof(g_tb.scroll_level));
     settings_save_one("tb/am_en", &am_val, sizeof(am_val));
-    LOG_INF("Trackball settings saved to NVS (speed=%d, am_en=%d)", g_tb.speed_level, am_val);
+    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d)",
+            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val);
 }
 
 static void schedule_settings_save(void)
@@ -138,32 +170,63 @@ void paw3204_control_on_motion(int8_t dx, int8_t dy)
     k_work_reschedule(&g_tb.automouse_timeout_work, K_MSEC(DEFAULT_AUTOMOUSE_TIMEOUT_MS));
 }
 
-/* --- Speed & Sniper Calculation --- */
-int paw3204_control_get_effective_div(int8_t dx, int8_t dy)
+/* --- Pointer Speed & Motion Calculation --- */
+void paw3204_control_calculate_motion(int8_t dx, int8_t dy, int *out_dx, int *out_dy)
 {
-    // 1. Sniper Mode takes top priority: slow, precise aiming
     if (g_tb.sniper_active) {
-        return SNIPER_SPEED_DIV; // div 6
+        int f_dx = dx / SNIPER_SPEED_DIV;
+        int f_dy = dy / SNIPER_SPEED_DIV;
+        if (f_dx == 0 && dx != 0) f_dx = (dx > 0) ? 1 : -1;
+        if (f_dy == 0 && dy != 0) f_dy = (dy > 0) ? 1 : -1;
+        *out_dx = f_dx;
+        *out_dy = f_dy;
+        return;
     }
 
-    // 2. Base speed divisor based on speed_level (1: div 1, 2: div 2, 3: div 3, 4: div 4)
-    int base_div = g_tb.speed_level;
-    if (base_div < 1) base_div = 1;
-    if (base_div > 4) base_div = 4;
+    int num = 1;
+    int den = 1;
 
-    // 3. Mouse Acceleration curve:
-    // If user moves gently (|dx|, |dy| <= 2): increase precision (divisor + 1)
-    // If user flicks fast (|dx|, |dy| >= 8): decrease divisor (faster glide)
+    switch (g_tb.speed_level) {
+    case 1: num = 2; den = 1; break; // Level 1: 2.0x (Ultra Fast)
+    case 2: num = 3; den = 2; break; // Level 2: 1.5x (Fast)
+    case 3: num = 1; den = 1; break; // Level 3: 1.0x (Normal / 1:1)
+    case 4: num = 7; den = 10; break; // Level 4: 0.7x (Moderate)
+    case 5: num = 1; den = 2; break; // Level 5: 0.5x (Slow)
+    case 6: num = 1; den = 4; break; // Level 6: 0.25x (Precision)
+    default: num = 1; den = 1; break;
+    }
+
+    // Dynamic Acceleration: Boost fast flick, increase micro-precision
     if (g_tb.acceleration_enabled) {
         int max_delta = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-        if (max_delta <= 2) {
-            return base_div + 1; // Extra precision for tiny moves
-        } else if (max_delta >= 8 && base_div > 1) {
-            return base_div - 1; // Accelerated fast glide
+        if (max_delta >= 8) {
+            num = (num * 3) / 2; // +50% flick boost
+        } else if (max_delta <= 2 && den < 8) {
+            den = den * 2; // Extra precision for micro-adjustments
         }
     }
 
-    return base_div;
+    int f_dx = (dx * num) / den;
+    int f_dy = (dy * num) / den;
+
+    if (f_dx == 0 && dx != 0) f_dx = (dx > 0) ? 1 : -1;
+    if (f_dy == 0 && dy != 0) f_dy = (dy > 0) ? 1 : -1;
+
+    *out_dx = f_dx;
+    *out_dy = f_dy;
+}
+
+int paw3204_control_get_effective_div(int8_t dx, int8_t dy)
+{
+    return 1;
+}
+
+int paw3204_control_get_scroll_div(void)
+{
+    uint8_t lvl = g_tb.scroll_level;
+    if (lvl < 1) lvl = 1;
+    if (lvl > MAX_SCROLL_LEVEL) lvl = MAX_SCROLL_LEVEL;
+    return s_scroll_div_table[lvl - 1];
 }
 
 bool paw3204_control_is_sniper_active(void)
@@ -191,16 +254,16 @@ void paw3204_control_speed_up(void)
 {
     if (g_tb.speed_level > 1) {
         g_tb.speed_level--;
-        LOG_INF("Trackball speed increased -> Level %d (div %d)", g_tb.speed_level, g_tb.speed_level);
+        LOG_INF("Trackball speed increased -> Level %d", g_tb.speed_level);
         schedule_settings_save();
     }
 }
 
 void paw3204_control_speed_down(void)
 {
-    if (g_tb.speed_level < 4) {
+    if (g_tb.speed_level < MAX_SPEED_LEVEL) {
         g_tb.speed_level++;
-        LOG_INF("Trackball speed decreased -> Level %d (div %d)", g_tb.speed_level, g_tb.speed_level);
+        LOG_INF("Trackball speed decreased -> Level %d", g_tb.speed_level);
         schedule_settings_save();
     }
 }
@@ -208,6 +271,31 @@ void paw3204_control_speed_down(void)
 uint8_t paw3204_control_get_speed_level(void)
 {
     return g_tb.speed_level;
+}
+
+void paw3204_control_scroll_speed_up(void)
+{
+    if (g_tb.scroll_level < MAX_SCROLL_LEVEL) {
+        g_tb.scroll_level++;
+        LOG_INF("Scroll sensitivity increased -> Level %d (div %d)",
+                g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1]);
+        schedule_settings_save();
+    }
+}
+
+void paw3204_control_scroll_speed_down(void)
+{
+    if (g_tb.scroll_level > 1) {
+        g_tb.scroll_level--;
+        LOG_INF("Scroll sensitivity decreased -> Level %d (div %d)",
+                g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1]);
+        schedule_settings_save();
+    }
+}
+
+uint8_t paw3204_control_get_scroll_level(void)
+{
+    return g_tb.scroll_level;
 }
 
 void paw3204_control_toggle_automouse(void)

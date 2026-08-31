@@ -177,7 +177,8 @@ static void paw3204_poll(struct k_work *work)
 					data->scroll_x_accum += dx;
 				}
 
-				int div = data->scroll_div > 0 ? data->scroll_div : 6;
+				int div = paw3204_control_get_scroll_div();
+				if (div <= 0) div = 20;
 
 				if (abs(data->scroll_y_accum) >= div) {
 					int wheel_steps = -(data->scroll_y_accum / div);
@@ -191,15 +192,9 @@ static void paw3204_poll(struct k_work *work)
 					data->scroll_x_accum %= div;
 				}
 			} else {
-				// Normal Cursor Move Mode with Dynamic Divisor & Sniper / Acceleration
-				int div = paw3204_control_get_effective_div(dx, dy);
-				if (div <= 0) div = 2;
-
-				int final_dx = dx / div;
-				int final_dy = dy / div;
-
-				if (final_dx == 0 && dx != 0) final_dx = (dx > 0) ? 1 : -1;
-				if (final_dy == 0 && dy != 0) final_dy = (dy > 0) ? 1 : -1;
+				// Normal Cursor Move Mode with Dynamic Speed Levels & Acceleration
+				int final_dx = 0, final_dy = 0;
+				paw3204_control_calculate_motion(dx, dy, &final_dx, &final_dy);
 
 				input_report_rel(dev, INPUT_REL_X, final_dx, false, K_NO_WAIT);
 				input_report_rel(dev, INPUT_REL_Y, final_dy, true, K_NO_WAIT);
@@ -261,6 +256,11 @@ static int paw3204_init(const struct device *dev)
 	// Read Product ID
 	uint8_t pid = paw3204_read_reg(cfg, REG_PID1);
 	LOG_INF("Bit Trade One ADTB7M (PAW3204) Product ID: 0x%02X (expected 0x30)", pid);
+
+	// Configure Hardware Resolution to 1600 CPI (Reg 0x05 Operation_Mode, bits [2:0] = 110b)
+	paw3204_write_reg(cfg, 0x05, 0x06);
+	uint8_t op_mode = paw3204_read_reg(cfg, 0x05);
+	LOG_INF("PAW3204 Resolution configured to 1600 CPI (Reg 0x05 = 0x%02X)", op_mode);
 
 	// Recover data line
 	paw3204_write_reg(cfg, 0x00, 0xFF);

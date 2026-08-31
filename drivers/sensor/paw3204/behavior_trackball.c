@@ -36,6 +36,12 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         // Momentary scroll: activate scroll mode while key is held
         paw3204_control_set_scroll_mode(true);
         break;
+    case TB_SCRL_UP:
+        paw3204_control_scroll_speed_up();
+        break;
+    case TB_SCRL_DN:
+        paw3204_control_scroll_speed_down();
+        break;
     default:
         LOG_WRN("Unknown trackball command: %d", binding->param1);
         return -ENOTSUP;
