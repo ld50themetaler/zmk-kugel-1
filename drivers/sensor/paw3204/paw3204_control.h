@@ -47,6 +47,10 @@ uint8_t paw3204_control_get_scroll_level(void);
 void paw3204_control_toggle_automouse(void);
 bool paw3204_control_is_automouse_enabled(void);
 
+// Acceleration Control
+void paw3204_control_toggle_acceleration(void);
+bool paw3204_control_is_acceleration_enabled(void);
+
 #ifdef __cplusplus
 }
 #endif

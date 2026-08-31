@@ -140,6 +140,20 @@ static int tb_settings_set(const char *name, size_t len, settings_read_cb read_c
         return rc;
     }
 
+    if (settings_name_steq(name, "accel", &next) && !next) {
+        uint8_t val = 0;
+        if (len != sizeof(val)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &val, sizeof(val));
+        if (rc >= 0) {
+            g_tb.acceleration_enabled = (val != 0);
+            LOG_INF("Loaded tb/accel: %d", g_tb.acceleration_enabled);
+            return 0;
+        }
+        return rc;
+    }
+
     return -ENOENT;
 }
 
@@ -148,11 +162,13 @@ SETTINGS_STATIC_HANDLER_DEFINE(tb, "tb", NULL, tb_settings_set, NULL, NULL);
 static void settings_save_work_handler(struct k_work *work)
 {
     uint8_t am_val = g_tb.automouse_enabled ? 1 : 0;
+    uint8_t accel_val = g_tb.acceleration_enabled ? 1 : 0;
     settings_save_one("tb/speed", &g_tb.speed_level, sizeof(g_tb.speed_level));
     settings_save_one("tb/scrl", &g_tb.scroll_level, sizeof(g_tb.scroll_level));
     settings_save_one("tb/am_en", &am_val, sizeof(am_val));
-    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d)",
-            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val);
+    settings_save_one("tb/accel", &accel_val, sizeof(accel_val));
+    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d, accel=%d)",
+            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val, accel_val);
 }
 
 static void schedule_settings_save(void)
@@ -215,14 +231,30 @@ void paw3204_control_calculate_motion(int8_t dx, int8_t dy, int *out_dx, int *ou
     int num = s_speed_table[lvl - 1].num;
     int den = s_speed_table[lvl - 1].den;
 
-    // Dynamic Acceleration: Boost fast flick, increase micro-precision
+    // Smooth Quadratic Acceleration Curve
+    // Multiplier varies continuously without jarring thresholds:
+    //   v <= 1: 0.60x (micro-precision)
+    //   v == 2: 0.80x (micro-precision)
+    //   v == 3: 1.00x (linear baseline)
+    //   v >= 4: 1.00x + 0.03 * (v - 3)^2, capped at 3.50x (v >= 13)
     if (g_tb.acceleration_enabled) {
-        int max_delta = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-        if (max_delta >= 8) {
-            num = (num * 3) / 2; // +50% flick boost
-        } else if (max_delta <= 2 && den < 64) {
-            den = den * 2; // Extra precision for micro-adjustments
+        int v = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+        int factor = 1000; // base 1.0x in 1/1000th scale
+
+        if (v <= 1) {
+            factor = 600;  // 0.60x
+        } else if (v == 2) {
+            factor = 800;  // 0.80x
+        } else {
+            int diff = v - 3;
+            factor = 1000 + 30 * diff * diff;
+            if (factor > 3500) {
+                factor = 3500; // Cap at 3.50x maximum boost
+            }
         }
+
+        num = num * factor;
+        den = den * 1000;
     }
 
     int f_dx = (dx * num) / den;
@@ -334,6 +366,18 @@ void paw3204_control_toggle_automouse(void)
 bool paw3204_control_is_automouse_enabled(void)
 {
     return g_tb.automouse_enabled;
+}
+
+void paw3204_control_toggle_acceleration(void)
+{
+    g_tb.acceleration_enabled = !g_tb.acceleration_enabled;
+    LOG_INF("Trackball acceleration toggled: %d", g_tb.acceleration_enabled);
+    schedule_settings_save();
+}
+
+bool paw3204_control_is_acceleration_enabled(void)
+{
+    return g_tb.acceleration_enabled;
 }
 
 /* --- Event Handlers (Layer & Keypress Listeners) --- */
