@@ -33,7 +33,7 @@ bool paw3204_control_is_scroll_mode(void);
 void paw3204_control_set_scroll_mode(bool enable);
 void paw3204_control_toggle_scroll_mode(void);
 
-// Dynamic Pointer Speed Control (Level 1: 2.0x, Level 2: 1.5x, Level 3: 1.0x, Level 4: 0.7x, Level 5: 0.5x, Level 6: 0.25x)
+// Dynamic Pointer Speed Control (Level 1: 2.50x to Level 16: 0.19x, Level 8: 1.00x default)
 void paw3204_control_speed_up(void);
 void paw3204_control_speed_down(void);
 uint8_t paw3204_control_get_speed_level(void);

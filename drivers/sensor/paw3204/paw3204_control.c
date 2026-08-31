@@ -21,13 +21,38 @@
 LOG_MODULE_REGISTER(paw3204_control, LOG_LEVEL_INF);
 
 // Default Configuration Constants
-#define DEFAULT_SPEED_LEVEL 3        // Level 3 = Normal (1.0x)
-#define MAX_SPEED_LEVEL 6
+#define DEFAULT_SPEED_LEVEL 8        // Level 8 = Normal (1.00x)
+#define MAX_SPEED_LEVEL 16
 #define DEFAULT_SCROLL_LEVEL 3       // Level 3 = Normal (div 20)
 #define MAX_SCROLL_LEVEL 6
 #define DEFAULT_AUTOMOUSE_ENABLE 1   // Enabled by default
 #define DEFAULT_AUTOMOUSE_TIMEOUT_MS 800
 #define SNIPER_SPEED_DIV 6           // 3x slower than normal (div 6)
+
+struct speed_ratio {
+    uint8_t num;
+    uint8_t den;
+};
+
+// 16-Step Pointer Speed Table (Level 1: 2.50x to Level 16: 0.19x, Level 8: 1.00x default)
+static const struct speed_ratio s_speed_table[MAX_SPEED_LEVEL] = {
+    { 40, 16 }, // Level 1: 2.50x
+    { 36, 16 }, // Level 2: 2.25x
+    { 32, 16 }, // Level 3: 2.00x
+    { 28, 16 }, // Level 4: 1.75x
+    { 24, 16 }, // Level 5: 1.50x
+    { 20, 16 }, // Level 6: 1.25x
+    { 18, 16 }, // Level 7: 1.125x
+    { 16, 16 }, // Level 8: 1.00x (Default / 1:1)
+    { 14, 16 }, // Level 9: 0.875x
+    { 12, 16 }, // Level 10: 0.75x
+    { 10, 16 }, // Level 11: 0.625x
+    {  8, 16 }, // Level 12: 0.50x
+    {  6, 16 }, // Level 13: 0.375x
+    {  5, 16 }, // Level 14: 0.3125x
+    {  4, 16 }, // Level 15: 0.25x
+    {  3, 16 }, // Level 16: 0.1875x
+};
 
 // Scroll Divisor Lookup Table (Level 1 to 6)
 static const uint8_t s_scroll_div_table[MAX_SCROLL_LEVEL] = {
@@ -40,7 +65,7 @@ static const uint8_t s_scroll_div_table[MAX_SCROLL_LEVEL] = {
 };
 
 struct tb_control_state {
-    uint8_t speed_level;       // 1 (2.0x) to 6 (0.25x)
+    uint8_t speed_level;       // 1 (2.50x) to 16 (0.19x)
     uint8_t scroll_level;      // 1 (div 36) to 6 (div 6)
     bool automouse_enabled;
     bool automouse_active;
@@ -183,25 +208,19 @@ void paw3204_control_calculate_motion(int8_t dx, int8_t dy, int *out_dx, int *ou
         return;
     }
 
-    int num = 1;
-    int den = 1;
+    uint8_t lvl = g_tb.speed_level;
+    if (lvl < 1) lvl = 1;
+    if (lvl > MAX_SPEED_LEVEL) lvl = MAX_SPEED_LEVEL;
 
-    switch (g_tb.speed_level) {
-    case 1: num = 2; den = 1; break; // Level 1: 2.0x (Ultra Fast)
-    case 2: num = 3; den = 2; break; // Level 2: 1.5x (Fast)
-    case 3: num = 1; den = 1; break; // Level 3: 1.0x (Normal / 1:1)
-    case 4: num = 7; den = 10; break; // Level 4: 0.7x (Moderate)
-    case 5: num = 1; den = 2; break; // Level 5: 0.5x (Slow)
-    case 6: num = 1; den = 4; break; // Level 6: 0.25x (Precision)
-    default: num = 1; den = 1; break;
-    }
+    int num = s_speed_table[lvl - 1].num;
+    int den = s_speed_table[lvl - 1].den;
 
     // Dynamic Acceleration: Boost fast flick, increase micro-precision
     if (g_tb.acceleration_enabled) {
         int max_delta = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
         if (max_delta >= 8) {
             num = (num * 3) / 2; // +50% flick boost
-        } else if (max_delta <= 2 && den < 8) {
+        } else if (max_delta <= 2 && den < 64) {
             den = den * 2; // Extra precision for micro-adjustments
         }
     }
