@@ -11,9 +11,6 @@ manifest:
       remote: zmkfirmware
       revision: main
       import: app/west.yml
-    - name: zmk-feature-non-lipo-battery-management
-      remote: sekigon-gonnoc
-      revision: main
     - name: prospector-zmk-module
       remote: prospector
       revision: v2.2.2
