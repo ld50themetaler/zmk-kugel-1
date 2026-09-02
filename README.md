@@ -1,37 +1,44 @@
-# ZMK Config for Kugel-1 (BLE Micro Pro Dedicated)
+﻿# ZMK Config for Kugel-1 (BLE Micro Pro Dedicated)
 
 Kugel-1 自作キーボード用の **BLE Micro Pro (BMP)** 専用 ZMK Firmware リポジトリです。  
-Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** によるグラフィカルなキーマップ変更、**Prospector Scanner** による外付けステータス表示、単三乾電池のバッテリー残量監視、QMK 互換の PCB LED インジケーターにも完全対応しています。
+Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** によるグラフィカルなキーマップ変更、**Prospector Scanner** による外付けステータス表示、単三乾電池のバッテリー残量監視、スマートな PCB LED インジケーター、トラックボールの10度刻み角度調整＆NVS永続化など、自作キーボードならではの高度な機能に完全対応しています。
 
 ---
 
 ## 🚀 ハードウェア構成と主な特徴
 
 - **MCU / ボード**: BLE Micro Pro (nRF52840 / BL654)
-- **キーマトリックス**:
+- **キーマトリックス (QMK 準拠の完全タイマー駆動・超堅牢スキャン)**:
   - 3個の MCP23S17（SPI接続 IO エキスパンダ、HAEN アドレス方式）による 43キーダイレクトスキャン
-  - Kugel-1 専用 ZMK Kscan ドライバ (`zmk,kscan-kugel`) による高速・低遅延キースキャン
+  - Kugel-1 専用 ZMK Kscan ドライバ (`zmk,kscan-kugel`) により、打鍵中 5ms / 待機時 50ms のポーリングで高速打鍵時も一切ハングしない安定動作を実現
 - **ポインティングデバイス (トラックボール)**:
-  - **Bit Trade One ADTB7M (PixArt PAW3204)** 1U トラックボール（標準・動作確認済み）
-  - **直感的なマウス操作レイヤー**: デフォルトレイヤーの `.` キー長押しで素早く `MOUSE` レイヤーに切り替え、右手ホームポジション周辺（`U`=左クリック、`O`=右クリック、`P`=中クリック）でシームレスに操作可能
-  - **モーメンタリ・スクロール (`&tb TB_SCRL_MOM`)**: `MOUSE` レイヤー中に Lower キーを押している間だけスクロールモードに移行し、離すと即座にポインター移動に戻る快適な操作感
+  - **PixArt PAW3204 (Bit Trade One ADTB7M)** 1U トラックボール（標準・動作確認済み）
+  - **📐 動作方向（角度）10度刻み調整機能**:
+    - キーボード中央のボールに右手を斜めに伸ばした際の自然な手の向きに合わせて、上下左右の軸を 10度刻みで左右に傾き補正可能
+    - Adjust レイヤーのキー操作で調整・リセットでき、設定値はマイコン内蔵 Flash (NVS) に自動永続化
+  - **直感的なマウス操作レイヤー**:
+    - デフォルトレイヤーの `.` キー長押しで素早く `MOUSE` レイヤーに切り替え、右手ホームポジション周辺（`U`=左クリック、`O`=右クリック、`P`=中クリック）でシームレスに操作可能
+  - **モーメンタリ・スクロール (`&tb TB_SCRL_MOM`)**:
+    - `MOUSE` レイヤー中に Lower キーを押している間だけスクロールモードに移行し、離すと即座にポインター移動に戻る快適な操作感
   - **オートマウスレイヤー機能**: ボールを回すと自動的に `MOUSE` レイヤーへ遷移し、停止800msまたはタイピング再開で即時復帰
   - **スナイパーモード**: `SNIPE` レイヤー突入時に超低速（通常の3倍遅い精密除数）へ自動減速
-  - **動的ポインター速度調整**: キー操作で 4 段階（Level 1〜4）の速度変更が可能（NVS 設定永続化対応）
-  - **ポインター加速度（Mouse Acceleration）**: 微小移動時の精密操作とフリック時の高速移動を両立
-  - **スクロール軸ロック**: 縦スクロール時の横ブレ暴発を防止
+  - **動的ポインター速度調整**: キー操作で 16 段階（2.50x〜0.19x）の速度変更が可能（NVS 設定永続化対応）
+  - **スクロール感度調整**: 6 段階（超滑らか〜高速）で好みのスクロール速度に調整可能（NVS 永続化）
+  - **ポインター加速度（Mouse Acceleration）**: 2次関数スムーズ加速の ON/OFF トグル対応
 - **単三乾電池（1本）バッテリー残量管理**:
-  - `zmk-feature-non-lipo-battery-management` 外部モジュールを `west.yml` 経由で統合
+  - `zmk-feature-non-lipo-battery-management` 外部モジュールを統合
   - QMK 純正設定に合わせた電圧測定レンジ（800mV = 0%、1300mV = 100%）により、単三アルカリ乾電池および NiMH（エネループ）の正確な残量を Windows / OS の Bluetooth Battery Service (BAS) へリアルタイム報告
   - USB 接続時は保護回路による電圧降下を検出し、100%（外部電源駆動）としてスマートにフォールバック表示
-- **QMK 完全互換 PCB ステータス LED (D100 / P0.08)**:
-  - ハードウェア UART TX の競合を排他制御し、基板上の青色 LED を GPIO インジケーターとして完全解放
-  - 未接続時: 5 秒周期の 2 連点滅
-  - BLE 接続時: 300ms 点灯
-  - 起動時: バッテリー残量に応じた点滅回数通知（QMK 同等シーケンス）
+- **スマート PCB ステータス LED (D100 / P0.08)**:
+  - 🔌 **USB接続時**: 有線給電＆USB動作中を示すため **常時点灯（Solid ON）**
+  - 🪫 **電池残量低下時（≦20%）**: キーを押すたびに 25ms だけ「チカッ」と小さく点灯（さりげない電池交換リマインダー）
+  - 📊 **Adjustレイヤーによるオンデマンド表示**:
+    - `&ind IND_BLE`: プロファイル番号（1〜5回短点滅）＋ 接続状態（接続中なら末尾に600ms長点灯）
+    - `&ind IND_BAT`: 4段階バッテリー残量パルス表示（4回: 75%以上、3回: 50〜74%、2回: 25〜49%、1回長点滅: 25%未満）
+    - `&ind IND_ALL`: BLE表示 $\to$ 800ms休止 $\to$ バッテリー表示を連続シーケンス表示
+  - 🔄 **BLEプロファイル切り替え連動**: `&bt BT_SEL 0`〜`4` 押下時にも、自動的に切り替え先スロット番号分 LED が点滅フィードバック
 - **Prospector Scanner ステータス表示連携**:
-  - `prospector-zmk-module` を `west.yml` 経由で導入
-  - BLE Advertisement により、Bluetooth の接続スロット（最大5台）を消費することなく、外付けディスプレイ端末（Prospector Scanner）へキーボード名、レイヤー、プロファイル、バッテリー残量、WPM などをリアルタイム配信
+  - `prospector-zmk-module` により、BLE Advertisement 経由で外付けディスプレイ端末（Prospector Scanner）へキーボード名、レイヤー、プロファイル、バッテリー残量、WPM などをリアルタイム配信
 - **ZMK Studio 完全対応**:
   - 実機のエルゴノミクス曲線を 1:1 で再現した物理キーレイアウト定義 (`key_physical_attrs`)
   - USB / BLE 双方でのリアルタイムかつグラフィカルなキーマップ変更に対応
@@ -50,11 +57,13 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
 │   └── arduino_pro_micro_pins.dtsi / ble_micro_pro-pinctrl.dtsi
 ├── drivers/
 │   ├── kscan/
-│   │   └── kscan_kugel.c           # Kugel-1 MCP23S17 HAEN スキャンドライバ
+│   │   └── kscan_kugel.c           # Kugel-1 MCP23S17 HAEN スキャンドライバ (完全タイマー駆動)
 │   ├── indicator/
-│   │   └── kugel_indicator.c       # QMK互換 PCB LED (D100) 点滅制御ドライバ
+│   │   ├── kugel_indicator.c       # PCB LED 点滅制御ドライバ (USB常点灯/打鍵Glow/ステータス表示)
+│   │   ├── kugel_indicator.h
+│   │   └── behavior_indicator.c    # &ind カスタムビヘイビア実装
 │   └── sensor/
-│       └── paw3204/                # PAW3204 ドライバ・拡張制御・Behavior一式
+│       └── paw3204/                # PAW3204 ドライバ・角度調整・加速・Behavior一式
 │           ├── paw3204.c / paw3204.h
 │           ├── paw3204_control.c / paw3204_control.h
 │           └── behavior_trackball.c
@@ -64,9 +73,11 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
 │   ├── sensor/
 │   │   └── bto,paw3204.yaml        # PAW3204 DTS バインディング
 │   └── behaviors/
-│       └── zmk,behavior-trackball.yaml # トラックボール制御 Behavior バインディング
+│       ├── zmk,behavior-trackball.yaml # トラックボール制御 Behavior バインディング
+│       └── zmk,behavior-indicator.yaml # LEDインジケータ Behavior バインディング
 ├── include/dt-bindings/zmk/
-│   └── trackball.h                 # トラックボール操作用コマンド定義ヘッダー
+│   ├── trackball.h                 # トラックボール操作用コマンド定義ヘッダー
+│   └── indicator.h                 # LEDインジケータ操作用コマンド定義ヘッダー
 ├── config/
 │   ├── west.yml                    # 外部モジュール管理 (non-lipo-battery, prospector)
 │   └── boards/shields/kugel/
@@ -99,10 +110,16 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
   - ファンクションキー（F1〜F12）・カーソル移動
   - キー長押しでトラックボールスクロール
 - **Layer 3: Adjust**
-  - BLE プロファイル切り替え（Profile 0〜4、切り替え時に該当プロファイル番号をLED自動点滅フィードバック）
-  - LED ステータスインジケータ表示: `&ind IND_BLE`（接続先・接続状態）、`&ind IND_BAT`（4段階バッテリー残量）、`&ind IND_ALL`（総合ステータス表示）
-  - USB / BLE 出力トグル
-  - トラックボール速度調整（Level 1〜16: 2.50x〜0.19x）、スクロール感度調整（Level 1〜6: 超滑らか〜高速）、動作方向角度調整（10度刻み・左右傾き補正・リセット）、2次関数スムーズ加速ON/OFFトグル、オートマウス有効/無効トグル（各設定は NVS に自動永続化）
+  - **BLE プロファイル切り替え**: `&bt BT_SEL 0`〜`4`（切り替え時に該当プロファイル番号をLED自動点滅フィードバック）
+  - **LED ステータスインジケータ**: `&ind IND_BLE`（接続先・接続状態）、`&ind IND_BAT`（4段階バッテリー残量）、`&ind IND_ALL`（総合ステータス表示）
+  - **USB / BLE 出力トグル / クリア**: `&bt BT_CLR`, `&bt BT_CLR_ALL`
+  - **トラックボール制御**:
+    - 速度調整: `&tb TB_SPD_UP` / `&tb TB_SPD_DN`（16段階）
+    - スクロール感度調整: `&tb TB_SCRL_UP` / `&tb TB_SCRL_DN`（6段階）
+    - 角度調整: `&tb TB_ROT_CW`（時計回り+10°） / `&tb TB_ROT_CCW`（反時計回り-10°） / `&tb TB_ROT_RES`（0°リセット）
+    - 2次関数スムーズ加速ON/OFF: `&tb TB_ACCEL_TOG`
+    - オートマウス有効/無効: `&tb TB_AM_TOG`
+    - ※すべての設定値は NVS に自動永続化されます。
 - **Layer 4: Mouse**
   - トラックボール操作または `.` キー長押しで突入
   - ホームポジション周辺でマウス操作: `U`（左クリック）、`O`（右クリック）、`P`（中クリック）
@@ -118,7 +135,7 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
 スクリプトはユーザー環境に依存しない汎用的な設計になっています。
 
 ### 1. Windows の場合
-リポジトリ直下の **`build-local.bat`** をダブルクリックして実行します。
+リポジトリ直下の **`build-local.bat`** をダブルクリックして実行します。  
 （WSL 内の Docker コンテナが自動起動し、ファームウェアをコンパイルします）
 
 ### 2. WSL / Linux の場合
@@ -138,18 +155,3 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
 2. リセットボタンを素早く **2回押し**（ダブルタップ）して、ブートローダーモード（マスストレージドライブ）に入ります。
 3. PC に認識されたドライブ（**`BLEMICROPRO`**）に、生成された `build/artifacts/kugel_ble_micro_pro.uf2` をドラッグ＆ドロップします。
 4. 書き込みが完了すると、自動的に再起動して Kugel-1 として動作を開始します。
-
----
-
-## ⚠️ 電源管理とスリープに関する技術メモ (Known Issue / Memo)
-
-### ZMK Studio と `CONFIG_ZMK_SLEEP` の共存不具合について
-現在、Zephyr 4.1 ベースの ZMK main において、**ZMK Studio（`CONFIG_ZMK_STUDIO=y`）とディープスリープ（`CONFIG_ZMK_SLEEP=y`）を同時に有効にすると、スリープ移行時に電源管理（`pm.c` / `pm_device_slots`）のメモリ違反によりマイコンがハングアップしてキー復帰できなくなる不具合**（上流 GitHub Issues #3195, #3207）が存在します。
-
-そのため、現在の本リポジトリでは安定運用のために **`CONFIG_ZMK_SLEEP=n`（ディープスリープオフ）** に設定し、**System ON 省電力アイドル待機（WFI）** で運用しています。
-- **電池持ちへの影響**: アイドル待機（30秒放置で省電力モード・50msスキャン待機へ移行）でも、単三乾電池（エネループ等）1本で **日常使用で約 3 ヶ月、完全放置で約 5〜6 ヶ月** 動作します（旧 QMK ファームウェアと同等の運用形態です）。
-- **メリット**: スリープによる Bluetooth 切断や復帰遅延がなく、キーを押した瞬間に遅延ゼロ（1ミリ秒）で即座に入力されます。
-
-### 将来のアップデート方針
-ZMK / Zephyr 上流で上記バグ（Issue #3195）が修正され、ZMK Studio とディープスリープの共存が安定動作するようになった段階で、`config/boards/shields/kugel/kugel.conf` の **`CONFIG_ZMK_SLEEP=y`** を再有効化する予定です。
-
