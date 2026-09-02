@@ -223,13 +223,16 @@ static void kscan_kugel_work_handler(struct k_work *work)
 			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
 		}
 
-		// Ensure IO_ROW holds 0V (GND) with pull-down
+		// Ensure IO_ROW holds 0V (GND)
 		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
-			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
 		}
 
-		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
-		data->int_enabled = true;
+		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
+			data->int_enabled = true;
+		}
 	}
 
 	// Active (pressed/releasing): 5ms scan rate
@@ -307,9 +310,9 @@ static int kscan_kugel_init(const struct device *dev)
 		k_msleep(20);
 	}
 
-	// 2. Drive common row ground (P0.22) to LOW with pull-down retention
+	// 2. Drive common row ground (P0.22) to LOW (0V)
 	if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
-		gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+		gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
 	}
 
 	// 3. MCP23S17 Initialization (Broadcast & Individual)
@@ -354,7 +357,7 @@ static int kscan_kugel_init(const struct device *dev)
 
 	// 4. Configure IO_INT GPIO on nRF52840 (pro_micro 8 / P1.00)
 	if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
-		gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT);
+		gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
 		gpio_init_callback(&data->int_cb, kscan_kugel_int_handler, BIT(cfg->int_gpio.pin));
 		gpio_add_callback(cfg->int_gpio.port, &data->int_cb);
 		gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
@@ -382,26 +385,42 @@ static int kscan_kugel_pm_action(const struct device *dev, enum pm_device_action
 	case PM_DEVICE_ACTION_SUSPEND:
 		k_work_cancel_delayable(&data->work);
 
-		// Ensure row_gpio maintains 0V (GND) via pull-down during System OFF
+		// 1. Configure row_gpio as INPUT with PULL_DOWN so 0V (GND) is retained during System OFF!
+		// Output driver turns off in System OFF, but input pull-down stays active to ground switches.
 		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
-			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
 		}
 
-		// Read GPIO on all 3 chips to explicitly clear any pending interrupt latches
+		// 2. Read GPIO on all 3 chips to explicitly clear any pending interrupt latches
 		for (uint8_t chip = 0; chip < 3; chip++) {
 			uint8_t tx[4] = { (uint8_t)(0x40 | (chip << 1) | 0x01), 0x12, 0, 0 };
 			uint8_t rx[4] = { 0 };
 			mcp23s17_transfer(&cfg->spi, tx, rx, 4);
 		}
 
+		// 3. Configure int_gpio with PULL_UP and arm SENSE LOW for System OFF wakeup!
 		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
-			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_DISABLE);
+			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_LOW);
 			data->int_enabled = true;
 		}
 
 		LOG_INF("Kscan Kugel suspended, wake armed and latches cleared");
 		break;
 	case PM_DEVICE_ACTION_RESUME:
+		// 1. Restore row_gpio as active LOW output
+		if (cfg->row_gpio.port != NULL && gpio_is_ready_dt(&cfg->row_gpio)) {
+			gpio_pin_configure_dt(&cfg->row_gpio, GPIO_OUTPUT_INACTIVE);
+		}
+
+		// 2. Restore int_gpio with pull-up and level interrupt
+		if (cfg->int_gpio.port != NULL && gpio_is_ready_dt(&cfg->int_gpio)) {
+			gpio_pin_configure_dt(&cfg->int_gpio, GPIO_INPUT | GPIO_PULL_UP);
+			gpio_pin_interrupt_configure_dt(&cfg->int_gpio, GPIO_INT_LEVEL_ACTIVE);
+			data->int_enabled = true;
+		}
+
 		data->idle_scan_count = 0;
 		k_work_reschedule(&data->work, K_NO_WAIT);
 		LOG_INF("Kscan Kugel resumed");

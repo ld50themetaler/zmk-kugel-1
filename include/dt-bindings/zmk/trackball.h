@@ -14,5 +14,12 @@
 #define TB_SCRL_UP  5
 #define TB_SCRL_DN  6
 #define TB_ACCEL_TOG 7
+#define TB_ROT_CW    8
+#define TB_ROT_CCW   9
+#define TB_ROT_RES   10
+
+/* Aliases for convenience */
+#define TB_ROT_R     TB_ROT_CW
+#define TB_ROT_L     TB_ROT_CCW
 
 #endif /* DT_BINDINGS_ZMK_TRACKBALL_H_ */

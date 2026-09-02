@@ -45,6 +45,15 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
     case TB_ACCEL_TOG:
         paw3204_control_toggle_acceleration();
         break;
+    case TB_ROT_CW:
+        paw3204_control_rotate_cw();
+        break;
+    case TB_ROT_CCW:
+        paw3204_control_rotate_ccw();
+        break;
+    case TB_ROT_RES:
+        paw3204_control_rotate_reset();
+        break;
     default:
         LOG_WRN("Unknown trackball command: %d", binding->param1);
         return -ENOTSUP;

@@ -162,19 +162,23 @@ static void paw3204_poll(struct k_work *work)
 			// Notify control subsystem (triggers auto-mouse layer timer)
 			paw3204_control_on_motion(dx, dy);
 
+			// Dynamic angle rotation compensation
+			int rot_dx = 0, rot_dy = 0;
+			paw3204_control_rotate_motion(dx, dy, &rot_dx, &rot_dy);
+
 			bool in_scroll = data->scroll_mode || paw3204_control_is_scroll_mode();
 
 			if (in_scroll) {
 				// Scroll Mode with Axis Lock:
-				// Down (+dy) scrolls down (-INPUT_REL_WHEEL)
+				// Down (+rot_dy) scrolls down (-INPUT_REL_WHEEL)
 				// Prevent accidental horizontal scroll during vertical scrolling
-				if (abs(dy) >= 2 * abs(dx)) {
-					data->scroll_y_accum += dy;
-				} else if (abs(dx) >= 2 * abs(dy)) {
-					data->scroll_x_accum += dx;
+				if (abs(rot_dy) >= 2 * abs(rot_dx)) {
+					data->scroll_y_accum += rot_dy;
+				} else if (abs(rot_dx) >= 2 * abs(rot_dy)) {
+					data->scroll_x_accum += rot_dx;
 				} else {
-					data->scroll_y_accum += dy;
-					data->scroll_x_accum += dx;
+					data->scroll_y_accum += rot_dy;
+					data->scroll_x_accum += rot_dx;
 				}
 
 				int div = paw3204_control_get_scroll_div();
@@ -193,11 +197,13 @@ static void paw3204_poll(struct k_work *work)
 				}
 			} else {
 				// Normal Cursor Move Mode with Dynamic Speed Levels & Acceleration
-				int final_dx = 0, final_dy = 0;
-				paw3204_control_calculate_motion(dx, dy, &final_dx, &final_dy);
+				if (rot_dx != 0 || rot_dy != 0) {
+					int final_dx = 0, final_dy = 0;
+					paw3204_control_calculate_motion(rot_dx, rot_dy, &final_dx, &final_dy);
 
-				input_report_rel(dev, INPUT_REL_X, final_dx, false, K_NO_WAIT);
-				input_report_rel(dev, INPUT_REL_Y, final_dy, true, K_NO_WAIT);
+					input_report_rel(dev, INPUT_REL_X, final_dx, false, K_NO_WAIT);
+					input_report_rel(dev, INPUT_REL_Y, final_dy, true, K_NO_WAIT);
+				}
 			}
 			data->idle_count = 0;
 		} else {

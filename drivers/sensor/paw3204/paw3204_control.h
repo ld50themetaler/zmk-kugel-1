@@ -25,7 +25,7 @@ void paw3204_control_init(void);
 void paw3204_control_on_motion(int8_t dx, int8_t dy);
 
 // Speed & Mode Queries
-void paw3204_control_calculate_motion(int8_t dx, int8_t dy, int *out_dx, int *out_dy);
+void paw3204_control_calculate_motion(int dx, int dy, int *out_dx, int *out_dy);
 int paw3204_control_get_effective_div(int8_t dx, int8_t dy);
 int paw3204_control_get_scroll_div(void);
 bool paw3204_control_is_sniper_active(void);
@@ -50,6 +50,13 @@ bool paw3204_control_is_automouse_enabled(void);
 // Acceleration Control
 void paw3204_control_toggle_acceleration(void);
 bool paw3204_control_is_acceleration_enabled(void);
+
+// Dynamic Rotation Angle Control (-180 deg to +180 deg in 10-deg steps)
+void paw3204_control_rotate_cw(void);
+void paw3204_control_rotate_ccw(void);
+void paw3204_control_rotate_reset(void);
+int16_t paw3204_control_get_rotation_angle(void);
+void paw3204_control_rotate_motion(int in_dx, int in_dy, int *out_dx, int *out_dy);
 
 #ifdef __cplusplus
 }

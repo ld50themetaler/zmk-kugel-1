@@ -28,6 +28,11 @@ LOG_MODULE_REGISTER(paw3204_control, LOG_LEVEL_INF);
 #define DEFAULT_AUTOMOUSE_ENABLE 1   // Enabled by default
 #define DEFAULT_AUTOMOUSE_TIMEOUT_MS 800
 #define SNIPER_SPEED_DIV 6           // 3x slower than normal (div 6)
+#define DEFAULT_ROTATION_ANGLE 0     // 0 deg default (no tilt)
+#define MIN_ROTATION_ANGLE -180
+#define MAX_ROTATION_ANGLE 180
+#define ROTATION_STEP_DEG 10
+#define ROTATION_SCALE 1024
 
 struct speed_ratio {
     uint8_t num;
@@ -64,9 +69,55 @@ static const uint8_t s_scroll_div_table[MAX_SCROLL_LEVEL] = {
     6,  // Level 6: Ultra Fast (Legacy div 6)
 };
 
+struct rot_trig {
+    int16_t cos_val;
+    int16_t sin_val;
+};
+
+// 36-Step Fixed-Point (x1024) Trigonometric Table for 0 to 350 deg in 10-deg steps
+static const struct rot_trig s_rot_table[36] = {
+    /*   0 deg */ {  1024,     0 },
+    /*  10 deg */ {  1008,   178 },
+    /*  20 deg */ {   962,   350 },
+    /*  30 deg */ {   887,   512 },
+    /*  40 deg */ {   784,   658 },
+    /*  50 deg */ {   658,   784 },
+    /*  60 deg */ {   512,   887 },
+    /*  70 deg */ {   350,   962 },
+    /*  80 deg */ {   178,  1008 },
+    /*  90 deg */ {     0,  1024 },
+    /* 100 deg */ {  -178,  1008 },
+    /* 110 deg */ {  -350,   962 },
+    /* 120 deg */ {  -512,   887 },
+    /* 130 deg */ {  -658,   784 },
+    /* 140 deg */ {  -784,   658 },
+    /* 150 deg */ {  -887,   512 },
+    /* 160 deg */ {  -962,   350 },
+    /* 170 deg */ { -1008,   178 },
+    /* 180 deg */ { -1024,     0 },
+    /* 190 deg */ { -1008,  -178 },
+    /* 200 deg */ {  -962,  -350 },
+    /* 210 deg */ {  -887,  -512 },
+    /* 220 deg */ {  -784,  -658 },
+    /* 230 deg */ {  -658,  -784 },
+    /* 240 deg */ {  -512,  -887 },
+    /* 250 deg */ {  -350,  -962 },
+    /* 260 deg */ {  -178, -1008 },
+    /* 270 deg */ {     0, -1024 },
+    /* 280 deg */ {   178, -1008 },
+    /* 290 deg */ {   350,  -962 },
+    /* 300 deg */ {   512,  -887 },
+    /* 310 deg */ {   658,  -784 },
+    /* 320 deg */ {   784,  -658 },
+    /* 330 deg */ {   887,  -512 },
+    /* 340 deg */ {   962,  -350 },
+    /* 350 deg */ {  1008,  -178 },
+};
+
 struct tb_control_state {
     uint8_t speed_level;       // 1 (2.50x) to 16 (0.19x)
     uint8_t scroll_level;      // 1 (div 36) to 6 (div 6)
+    int16_t rotation_angle;    // -180 to +180 deg (0 = default)
     bool automouse_enabled;
     bool automouse_active;
     bool sniper_active;
@@ -80,6 +131,7 @@ struct tb_control_state {
 static struct tb_control_state g_tb = {
     .speed_level = DEFAULT_SPEED_LEVEL,
     .scroll_level = DEFAULT_SCROLL_LEVEL,
+    .rotation_angle = DEFAULT_ROTATION_ANGLE,
     .automouse_enabled = false,
     .automouse_active = false,
     .sniper_active = false,
@@ -87,6 +139,9 @@ static struct tb_control_state g_tb = {
     .scroll_axis_lock = true,
     .acceleration_enabled = true,
 };
+
+static int s_rot_x_accum = 0;
+static int s_rot_y_accum = 0;
 
 /* --- Settings (NVS) Persistence --- */
 #if IS_ENABLED(CONFIG_SETTINGS)
@@ -154,6 +209,21 @@ static int tb_settings_set(const char *name, size_t len, settings_read_cb read_c
         return rc;
     }
 
+    if (settings_name_steq(name, "rot", &next) && !next) {
+        if (len != sizeof(g_tb.rotation_angle)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &g_tb.rotation_angle, sizeof(g_tb.rotation_angle));
+        if (rc >= 0) {
+            if (g_tb.rotation_angle < MIN_ROTATION_ANGLE || g_tb.rotation_angle > MAX_ROTATION_ANGLE || (g_tb.rotation_angle % ROTATION_STEP_DEG != 0)) {
+                g_tb.rotation_angle = DEFAULT_ROTATION_ANGLE;
+            }
+            LOG_INF("Loaded tb/rot: %d deg", g_tb.rotation_angle);
+            return 0;
+        }
+        return rc;
+    }
+
     return -ENOENT;
 }
 
@@ -167,8 +237,9 @@ static void settings_save_work_handler(struct k_work *work)
     settings_save_one("tb/scrl", &g_tb.scroll_level, sizeof(g_tb.scroll_level));
     settings_save_one("tb/am_en", &am_val, sizeof(am_val));
     settings_save_one("tb/accel", &accel_val, sizeof(accel_val));
-    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d, accel=%d)",
-            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val, accel_val);
+    settings_save_one("tb/rot", &g_tb.rotation_angle, sizeof(g_tb.rotation_angle));
+    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d, accel=%d, rot=%d deg)",
+            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val, accel_val, g_tb.rotation_angle);
 }
 
 static void schedule_settings_save(void)
@@ -212,7 +283,7 @@ void paw3204_control_on_motion(int8_t dx, int8_t dy)
 }
 
 /* --- Pointer Speed & Motion Calculation --- */
-void paw3204_control_calculate_motion(int8_t dx, int8_t dy, int *out_dx, int *out_dy)
+void paw3204_control_calculate_motion(int dx, int dy, int *out_dx, int *out_dy)
 {
     if (g_tb.sniper_active) {
         int f_dx = dx / SNIPER_SPEED_DIV;
@@ -378,6 +449,81 @@ void paw3204_control_toggle_acceleration(void)
 bool paw3204_control_is_acceleration_enabled(void)
 {
     return g_tb.acceleration_enabled;
+}
+
+/* --- Dynamic Rotation Angle Control --- */
+void paw3204_control_rotate_cw(void)
+{
+    if (g_tb.rotation_angle < MAX_ROTATION_ANGLE) {
+        g_tb.rotation_angle += ROTATION_STEP_DEG;
+        s_rot_x_accum = 0;
+        s_rot_y_accum = 0;
+        LOG_INF("Trackball rotation angle -> %d deg (CW)", g_tb.rotation_angle);
+        schedule_settings_save();
+    }
+}
+
+void paw3204_control_rotate_ccw(void)
+{
+    if (g_tb.rotation_angle > MIN_ROTATION_ANGLE) {
+        g_tb.rotation_angle -= ROTATION_STEP_DEG;
+        s_rot_x_accum = 0;
+        s_rot_y_accum = 0;
+        LOG_INF("Trackball rotation angle -> %d deg (CCW)", g_tb.rotation_angle);
+        schedule_settings_save();
+    }
+}
+
+void paw3204_control_rotate_reset(void)
+{
+    g_tb.rotation_angle = DEFAULT_ROTATION_ANGLE;
+    s_rot_x_accum = 0;
+    s_rot_y_accum = 0;
+    LOG_INF("Trackball rotation angle RESET -> 0 deg");
+    schedule_settings_save();
+}
+
+int16_t paw3204_control_get_rotation_angle(void)
+{
+    return g_tb.rotation_angle;
+}
+
+void paw3204_control_rotate_motion(int in_dx, int in_dy, int *out_dx, int *out_dy)
+{
+    int angle = g_tb.rotation_angle;
+    if (angle == 0) {
+        *out_dx = in_dx;
+        *out_dy = in_dy;
+        return;
+    }
+
+    int norm = angle % 360;
+    if (norm < 0) {
+        norm += 360;
+    }
+    int idx = (norm / 10) % 36;
+    int c = s_rot_table[idx].cos_val;
+    int s = s_rot_table[idx].sin_val;
+
+    // Screen coordinate system (X: right +, Y: down +)
+    // Clockwise rotation by angle theta:
+    // x' = x * cos(theta) - y * sin(theta)
+    // y' = x * sin(theta) + y * cos(theta)
+    int rot_x = in_dx * c - in_dy * s;
+    int rot_y = in_dx * s + in_dy * c;
+
+    s_rot_x_accum += rot_x;
+    s_rot_y_accum += rot_y;
+
+    // Round to nearest integer with fractional accumulation to preserve micro-movements
+    int res_dx = (s_rot_x_accum + (s_rot_x_accum >= 0 ? ROTATION_SCALE / 2 : -ROTATION_SCALE / 2)) / ROTATION_SCALE;
+    int res_dy = (s_rot_y_accum + (s_rot_y_accum >= 0 ? ROTATION_SCALE / 2 : -ROTATION_SCALE / 2)) / ROTATION_SCALE;
+
+    s_rot_x_accum -= res_dx * ROTATION_SCALE;
+    s_rot_y_accum -= res_dy * ROTATION_SCALE;
+
+    *out_dx = res_dx;
+    *out_dy = res_dy;
 }
 
 /* --- Event Handlers (Layer & Keypress Listeners) --- */
