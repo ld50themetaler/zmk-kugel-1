@@ -13,9 +13,11 @@
 #include <zmk/events/ble_active_profile_changed.h>
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/events/activity_state_changed.h>
+#include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/ble.h>
 #include <zmk/battery.h>
 #include <zmk/activity.h>
+#include <zmk/usb.h>
 
 #include "kugel_indicator.h"
 
@@ -31,6 +33,7 @@ static const struct gpio_dt_spec s_led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
 
 enum indicator_mode {
     MODE_IDLE,
+    MODE_USB_POWERED,
     MODE_ADVERTISING,
     MODE_SHOW_BLE,
     MODE_SHOW_BATTERY,
@@ -47,6 +50,7 @@ static struct {
     bool is_sleeping;
     bool is_long_pulse;
     struct k_work_delayable work;
+    struct k_work_delayable glow_work;
 } g_ind;
 
 static void led_set(bool on)
@@ -60,6 +64,12 @@ static void trigger_advertising(void);
 
 static void return_to_idle_or_advertising(void)
 {
+    if (zmk_usb_is_powered()) {
+        led_set(true);
+        g_ind.mode = MODE_USB_POWERED;
+        return;
+    }
+
     led_set(false);
     g_ind.mode = MODE_IDLE;
     if (!zmk_ble_active_profile_is_connected()) {
@@ -69,8 +79,8 @@ static void return_to_idle_or_advertising(void)
 
 static void trigger_advertising(void)
 {
-    if (g_ind.mode >= MODE_SHOW_BLE) {
-        return; // Don't interrupt on-demand indicator
+    if (g_ind.mode >= MODE_SHOW_BLE || zmk_usb_is_powered()) {
+        return; // Don't interrupt on-demand indicator or USB solid ON
     }
     LOG_DBG("Triggering advertising indicator (5s double-pulse)");
     g_ind.mode = MODE_ADVERTISING;
@@ -126,6 +136,7 @@ void kugel_indicator_trigger(uint8_t mode)
     }
 
     k_work_cancel_delayable(&g_ind.work);
+    k_work_cancel_delayable(&g_ind.glow_work);
     led_set(false);
 
     switch (mode) {
@@ -141,6 +152,40 @@ void kugel_indicator_trigger(uint8_t mode)
     default:
         LOG_WRN("Unknown indicator trigger mode: %d", mode);
         break;
+    }
+}
+
+static void glow_off_work_handler(struct k_work *work)
+{
+    if (g_ind.is_sleeping) {
+        led_set(false);
+        return;
+    }
+
+    if (zmk_usb_is_powered()) {
+        led_set(true);
+    } else if (g_ind.mode < MODE_SHOW_BLE) {
+        led_set(false);
+    }
+}
+
+void kugel_indicator_key_press(void)
+{
+    // If USB is powered, LED is already solid ON
+    if (g_ind.is_sleeping || zmk_usb_is_powered()) {
+        return;
+    }
+
+    // Do not interrupt on-demand indicator sequences
+    if (g_ind.mode >= MODE_SHOW_BLE) {
+        return;
+    }
+
+    // Low Battery Key Glow: when SOC <= 20%, blink LED for 25ms on each key press
+    uint8_t soc = zmk_battery_state_of_charge();
+    if (soc <= 20) {
+        led_set(true);
+        k_work_reschedule(&g_ind.glow_work, K_MSEC(25));
     }
 }
 
@@ -228,6 +273,11 @@ static void indicator_work_handler(struct k_work *work)
     }
 
     case MODE_ADVERTISING:
+        if (zmk_usb_is_powered()) {
+            led_set(true);
+            g_ind.mode = MODE_USB_POWERED;
+            break;
+        }
         // Periodic advertising pattern: 50ms ON, 100ms OFF, 50ms ON, 4800ms OFF (5s period)
         switch (g_ind.step) {
         case 0:
@@ -254,12 +304,13 @@ static void indicator_work_handler(struct k_work *work)
         }
         break;
 
+    case MODE_USB_POWERED:
+        led_set(true);
+        break;
+
     case MODE_IDLE:
     default:
-        led_set(false);
-        if (!zmk_ble_active_profile_is_connected()) {
-            trigger_advertising();
-        }
+        return_to_idle_or_advertising();
         break;
     }
 }
@@ -282,6 +333,25 @@ static int ble_profile_listener(const zmk_event_t *eh)
 ZMK_LISTENER(kugel_ble_indicator, ble_profile_listener);
 ZMK_SUBSCRIPTION(kugel_ble_indicator, zmk_ble_active_profile_changed);
 
+static int usb_conn_state_listener(const zmk_event_t *eh)
+{
+    const struct zmk_usb_conn_state_changed *ev = as_zmk_usb_conn_state_changed(eh);
+    if (ev == NULL) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    LOG_INF("USB conn state changed: conn=%d", ev->conn_state);
+
+    if (g_ind.mode < MODE_SHOW_BLE) {
+        return_to_idle_or_advertising();
+    }
+
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(kugel_usb_indicator, usb_conn_state_listener);
+ZMK_SUBSCRIPTION(kugel_usb_indicator, zmk_usb_conn_state_changed);
+
 static int activity_state_listener(const zmk_event_t *eh)
 {
     const struct zmk_activity_state_changed *ev = as_zmk_activity_state_changed(eh);
@@ -293,14 +363,13 @@ static int activity_state_listener(const zmk_event_t *eh)
         LOG_INF("Entering sleep, turning off LED indicator");
         g_ind.is_sleeping = true;
         k_work_cancel_delayable(&g_ind.work);
+        k_work_cancel_delayable(&g_ind.glow_work);
         led_set(false);
         g_ind.mode = MODE_IDLE;
     } else if (ev->state == ZMK_ACTIVITY_ACTIVE && g_ind.is_sleeping) {
         LOG_INF("Waking up from sleep");
         g_ind.is_sleeping = false;
-        if (!zmk_ble_active_profile_is_connected()) {
-            trigger_advertising();
-        }
+        return_to_idle_or_advertising();
     }
 
     return ZMK_EV_EVENT_BUBBLE;
@@ -323,11 +392,17 @@ static int kugel_indicator_init(void)
     }
 
     k_work_init_delayable(&g_ind.work, indicator_work_handler);
+    k_work_init_delayable(&g_ind.glow_work, glow_off_work_handler);
 
     LOG_INF("Kugel indicator initialized successfully on P0.08");
 
-    // Show initial BLE profile & battery on boot
-    kugel_indicator_trigger(IND_ALL);
+    // Show initial state
+    if (zmk_usb_is_powered()) {
+        led_set(true);
+        g_ind.mode = MODE_USB_POWERED;
+    } else {
+        kugel_indicator_trigger(IND_ALL);
+    }
 
     return 0;
 }

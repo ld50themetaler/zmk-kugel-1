@@ -19,6 +19,7 @@
 #include <zephyr/pm/device.h>
 
 #include "../sensor/paw3204/paw3204.h"
+#include "../indicator/kugel_indicator.h"
 
 #if IS_ENABLED(CONFIG_SETTINGS)
 #include <zephyr/settings/settings.h>
@@ -180,6 +181,10 @@ static void kscan_kugel_work_handler(struct k_work *work)
 					// Dynamic Scroll Layer Trigger: Raise (Chip 1, Pin 6 / RC(1,6))
 					if (chip == 1 && pin == 6) {
 						paw3204_set_scroll_mode(pressed);
+					}
+
+					if (pressed) {
+						kugel_indicator_key_press();
 					}
 
 					if (data->callback) {

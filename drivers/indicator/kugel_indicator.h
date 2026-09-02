@@ -9,3 +9,4 @@
 #include <dt-bindings/zmk/indicator.h>
 
 void kugel_indicator_trigger(uint8_t mode);
+void kugel_indicator_key_press(void);
