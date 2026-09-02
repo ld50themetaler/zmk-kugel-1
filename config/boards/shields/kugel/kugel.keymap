@@ -4,6 +4,7 @@
  */
 
 #include <dt-bindings/zmk/trackball.h>
+#include <dt-bindings/zmk/indicator.h>
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/bt.h>
 #include <dt-bindings/zmk/keys.h>
@@ -114,7 +115,7 @@
         adjust_layer {
             display-name = "Adjust";
             bindings = <
-&bootloader  &bt BT_SEL 0   &bt BT_SEL 1     &bt BT_SEL 2      &bt BT_SEL 3    &bt BT_SEL 4  &none           &bt BT_CLR    &none         &none       &none     &none  &bt BT_CLR_ALL
+&bootloader  &bt BT_SEL 0   &bt BT_SEL 1     &bt BT_SEL 2      &bt BT_SEL 3    &bt BT_SEL 4  &none           &bt BT_CLR    &ind IND_BLE  &ind IND_BAT  &ind IND_ALL  &none  &bt BT_CLR_ALL
 &none        &tb TB_AM_TOG  &tb TB_SCRL_TOG  &tb TB_ACCEL_TOG  &tb TB_ROT_RES  &none         &kp C_PREV      &kp C_VOL_DN  &kp C_VOL_UP  &kp C_NEXT  &kp C_PP  &none
 &none        &tb TB_SPD_DN  &tb TB_SPD_UP    &tb TB_SCRL_DN    &tb TB_SCRL_UP  &tb TB_ROT_CCW &tb TB_ROT_CW  &none         &none         &none       &none
 &trans       &trans         &trans           &trans            &trans          &trans        &trans

@@ -18,6 +18,7 @@ endif()
 
 if(CONFIG_KUGEL_INDICATOR)
     zephyr_library_sources(drivers/indicator/kugel_indicator.c)
+    zephyr_library_sources(drivers/indicator/behavior_indicator.c)
 endif()
 
 

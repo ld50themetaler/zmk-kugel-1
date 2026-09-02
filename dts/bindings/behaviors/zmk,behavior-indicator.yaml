@@ -1,0 +1,8 @@
+﻿# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: Status LED indicator behavior
+
+compatible: "zmk,behavior-indicator"
+
+include: one_param.yaml

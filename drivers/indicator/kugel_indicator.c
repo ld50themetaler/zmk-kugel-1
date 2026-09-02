@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2026 The ZMK Contributors
  * SPDX-License-Identifier: MIT
  */
@@ -17,6 +17,8 @@
 #include <zmk/battery.h>
 #include <zmk/activity.h>
 
+#include "kugel_indicator.h"
+
 LOG_MODULE_REGISTER(kugel_indicator, CONFIG_ZMK_LOG_LEVEL);
 
 #define LED_NODE DT_ALIAS(led0)
@@ -29,18 +31,21 @@ static const struct gpio_dt_spec s_led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
 
 enum indicator_mode {
     MODE_IDLE,
-    MODE_BATTERY,
     MODE_ADVERTISING,
-    MODE_CONNECTED,
+    MODE_SHOW_BLE,
+    MODE_SHOW_BATTERY,
+    MODE_SHOW_ALL_BLE,
+    MODE_SHOW_ALL_PAUSE,
+    MODE_SHOW_ALL_BATTERY,
 };
 
 static struct {
     enum indicator_mode mode;
     uint8_t step;
-    uint8_t pulses_remaining;
+    uint8_t target_pulses;
     bool ble_connected;
     bool is_sleeping;
-    bool battery_shown;
+    bool is_long_pulse;
     struct k_work_delayable work;
 } g_ind;
 
@@ -53,6 +58,92 @@ static void led_set(bool on)
 
 static void trigger_advertising(void);
 
+static void return_to_idle_or_advertising(void)
+{
+    led_set(false);
+    g_ind.mode = MODE_IDLE;
+    if (!zmk_ble_active_profile_is_connected()) {
+        trigger_advertising();
+    }
+}
+
+static void trigger_advertising(void)
+{
+    if (g_ind.mode >= MODE_SHOW_BLE) {
+        return; // Don't interrupt on-demand indicator
+    }
+    LOG_DBG("Triggering advertising indicator (5s double-pulse)");
+    g_ind.mode = MODE_ADVERTISING;
+    g_ind.step = 0;
+    k_work_reschedule(&g_ind.work, K_MSEC(100));
+}
+
+static void start_ble_sequence(enum indicator_mode next_mode)
+{
+    uint8_t profile_idx = zmk_ble_active_profile_index();
+    g_ind.ble_connected = zmk_ble_active_profile_is_connected();
+    g_ind.target_pulses = profile_idx + 1; // 1 to 5 pulses
+    g_ind.step = 0;
+    g_ind.mode = next_mode;
+    g_ind.is_long_pulse = false;
+
+    LOG_INF("Starting BLE indicator: Profile %d (%d pulses), connected=%d",
+            profile_idx, g_ind.target_pulses, g_ind.ble_connected);
+
+    k_work_reschedule(&g_ind.work, K_MSEC(50));
+}
+
+static void start_battery_sequence(enum indicator_mode next_mode)
+{
+    uint8_t soc = zmk_battery_state_of_charge();
+    if (soc >= 75) {
+        g_ind.target_pulses = 4;
+        g_ind.is_long_pulse = false;
+    } else if (soc >= 50) {
+        g_ind.target_pulses = 3;
+        g_ind.is_long_pulse = false;
+    } else if (soc >= 25) {
+        g_ind.target_pulses = 2;
+        g_ind.is_long_pulse = false;
+    } else {
+        g_ind.target_pulses = 1;
+        g_ind.is_long_pulse = true; // 1 long pulse for low battery (<25%)
+    }
+
+    g_ind.step = 0;
+    g_ind.mode = next_mode;
+
+    LOG_INF("Starting Battery indicator: SOC=%d%%, pulses=%d, long=%d",
+            soc, g_ind.target_pulses, g_ind.is_long_pulse);
+
+    k_work_reschedule(&g_ind.work, K_MSEC(50));
+}
+
+void kugel_indicator_trigger(uint8_t mode)
+{
+    if (g_ind.is_sleeping) {
+        return;
+    }
+
+    k_work_cancel_delayable(&g_ind.work);
+    led_set(false);
+
+    switch (mode) {
+    case IND_BLE:
+        start_ble_sequence(MODE_SHOW_BLE);
+        break;
+    case IND_BAT:
+        start_battery_sequence(MODE_SHOW_BATTERY);
+        break;
+    case IND_ALL:
+        start_ble_sequence(MODE_SHOW_ALL_BLE);
+        break;
+    default:
+        LOG_WRN("Unknown indicator trigger mode: %d", mode);
+        break;
+    }
+}
+
 static void indicator_work_handler(struct k_work *work)
 {
     if (g_ind.is_sleeping) {
@@ -62,42 +153,82 @@ static void indicator_work_handler(struct k_work *work)
     }
 
     switch (g_ind.mode) {
-    case MODE_BATTERY:
-        // Battery pulse sequence: 100ms ON, 200ms OFF for N pulses
-        if (g_ind.step % 2 == 0) {
-            // Turn ON
-            led_set(true);
-            g_ind.step++;
-            k_work_reschedule(&g_ind.work, K_MSEC(100));
-        } else {
-            // Turn OFF
-            led_set(false);
-            g_ind.step++;
-            if (g_ind.pulses_remaining > 1) {
-                g_ind.pulses_remaining--;
-                k_work_reschedule(&g_ind.work, K_MSEC(200));
+    case MODE_SHOW_BLE:
+    case MODE_SHOW_ALL_BLE: {
+        // Step 0..2*N-1: Pulses for profile index
+        // Each pulse: 120ms ON, 180ms OFF
+        uint8_t max_pulse_steps = g_ind.target_pulses * 2;
+        if (g_ind.step < max_pulse_steps) {
+            if (g_ind.step % 2 == 0) {
+                led_set(true);
+                g_ind.step++;
+                k_work_reschedule(&g_ind.work, K_MSEC(120));
             } else {
-                // Finished battery display
-                g_ind.mode = MODE_IDLE;
-                g_ind.battery_shown = true;
-                // Transition to BLE state
-                if (zmk_ble_active_profile_is_connected()) {
-                    g_ind.mode = MODE_IDLE;
+                led_set(false);
+                g_ind.step++;
+                k_work_reschedule(&g_ind.work, K_MSEC(180));
+            }
+        } else if (g_ind.step == max_pulse_steps) {
+            // Pulses complete. If connected, show 600ms solid ON!
+            if (g_ind.ble_connected) {
+                led_set(true);
+                g_ind.step++;
+                k_work_reschedule(&g_ind.work, K_MSEC(600));
+            } else {
+                // Not connected: finish BLE phase
+                led_set(false);
+                if (g_ind.mode == MODE_SHOW_ALL_BLE) {
+                    g_ind.mode = MODE_SHOW_ALL_PAUSE;
+                    k_work_reschedule(&g_ind.work, K_MSEC(800));
                 } else {
-                    trigger_advertising();
+                    return_to_idle_or_advertising();
                 }
+            }
+        } else {
+            // Connected solid ON finished
+            led_set(false);
+            if (g_ind.mode == MODE_SHOW_ALL_BLE) {
+                g_ind.mode = MODE_SHOW_ALL_PAUSE;
+                k_work_reschedule(&g_ind.work, K_MSEC(800));
+            } else {
+                return_to_idle_or_advertising();
             }
         }
         break;
+    }
 
-    case MODE_CONNECTED:
-        // Turn OFF after 300ms single flash
+    case MODE_SHOW_ALL_PAUSE:
+        // Pause between BLE and Battery displays (dark for 800ms)
         led_set(false);
-        g_ind.mode = MODE_IDLE;
+        start_battery_sequence(MODE_SHOW_ALL_BATTERY);
         break;
 
+    case MODE_SHOW_BATTERY:
+    case MODE_SHOW_ALL_BATTERY: {
+        // Battery pulse sequence:
+        // Standard: 150ms ON, 200ms OFF
+        // Low battery: 500ms ON, 200ms OFF
+        uint8_t max_pulse_steps = g_ind.target_pulses * 2;
+        if (g_ind.step < max_pulse_steps) {
+            if (g_ind.step % 2 == 0) {
+                led_set(true);
+                g_ind.step++;
+                uint32_t on_time = g_ind.is_long_pulse ? 500 : 150;
+                k_work_reschedule(&g_ind.work, K_MSEC(on_time));
+            } else {
+                led_set(false);
+                g_ind.step++;
+                k_work_reschedule(&g_ind.work, K_MSEC(200));
+            }
+        } else {
+            // Battery display complete
+            return_to_idle_or_advertising();
+        }
+        break;
+    }
+
     case MODE_ADVERTISING:
-        // Advertising pattern: 50ms ON, 100ms OFF, 50ms ON, 4800ms OFF (5s period)
+        // Periodic advertising pattern: 50ms ON, 100ms OFF, 50ms ON, 4800ms OFF (5s period)
         switch (g_ind.step) {
         case 0:
             led_set(true);
@@ -118,7 +249,6 @@ static void indicator_work_handler(struct k_work *work)
         default:
             led_set(false);
             g_ind.step = 0;
-            // Sleep for remainder of 5000ms period (5000 - 200 = 4800ms)
             k_work_reschedule(&g_ind.work, K_MSEC(4800));
             break;
         }
@@ -134,45 +264,6 @@ static void indicator_work_handler(struct k_work *work)
     }
 }
 
-static void trigger_battery_display(uint8_t soc)
-{
-    // QMK logic: > 70% -> 3 pulses, 30%..70% -> 2 pulses, < 30% -> 1 pulse
-    uint8_t pulses;
-    if (soc > 70) {
-        pulses = 3;
-    } else if (soc > 30) {
-        pulses = 2;
-    } else {
-        pulses = 1;
-    }
-
-    LOG_INF("Triggering battery indicator: SOC=%d%%, pulses=%d", soc, pulses);
-    g_ind.mode = MODE_BATTERY;
-    g_ind.step = 0;
-    g_ind.pulses_remaining = pulses;
-    k_work_reschedule(&g_ind.work, K_MSEC(10));
-}
-
-static void trigger_connected(void)
-{
-    LOG_INF("Triggering connected indicator (300ms single flash)");
-    g_ind.mode = MODE_CONNECTED;
-    g_ind.step = 0;
-    led_set(true);
-    k_work_reschedule(&g_ind.work, K_MSEC(300));
-}
-
-static void trigger_advertising(void)
-{
-    if (g_ind.mode == MODE_BATTERY) {
-        return; // Let battery finish first
-    }
-    LOG_INF("Triggering advertising indicator (5s double-pulse)");
-    g_ind.mode = MODE_ADVERTISING;
-    g_ind.step = 0;
-    k_work_reschedule(&g_ind.work, K_MSEC(100));
-}
-
 static int ble_profile_listener(const zmk_event_t *eh)
 {
     const struct zmk_ble_active_profile_changed *ev = as_zmk_ble_active_profile_changed(eh);
@@ -180,41 +271,16 @@ static int ble_profile_listener(const zmk_event_t *eh)
         return ZMK_EV_EVENT_BUBBLE;
     }
 
-    bool is_connected = zmk_ble_active_profile_is_connected();
-    LOG_INF("BLE profile changed: index=%d, connected=%d", ev->index, is_connected);
+    LOG_INF("BLE profile changed: index=%d", ev->index);
 
-    if (is_connected && !g_ind.ble_connected) {
-        g_ind.ble_connected = true;
-        trigger_connected();
-    } else if (!is_connected) {
-        g_ind.ble_connected = false;
-        trigger_advertising();
-    }
+    // Automatically trigger BLE indicator on profile change!
+    kugel_indicator_trigger(IND_BLE);
 
     return ZMK_EV_EVENT_BUBBLE;
 }
 
 ZMK_LISTENER(kugel_ble_indicator, ble_profile_listener);
 ZMK_SUBSCRIPTION(kugel_ble_indicator, zmk_ble_active_profile_changed);
-
-static int battery_state_listener(const zmk_event_t *eh)
-{
-    const struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
-    if (ev == NULL) {
-        return ZMK_EV_EVENT_BUBBLE;
-    }
-
-    LOG_INF("Battery state changed: SOC=%d%%", ev->state_of_charge);
-
-    if (!g_ind.battery_shown) {
-        trigger_battery_display(ev->state_of_charge);
-    }
-
-    return ZMK_EV_EVENT_BUBBLE;
-}
-
-ZMK_LISTENER(kugel_battery_indicator, battery_state_listener);
-ZMK_SUBSCRIPTION(kugel_battery_indicator, zmk_battery_state_changed);
 
 static int activity_state_listener(const zmk_event_t *eh)
 {
@@ -260,12 +326,8 @@ static int kugel_indicator_init(void)
 
     LOG_INF("Kugel indicator initialized successfully on P0.08");
 
-    uint8_t initial_soc = zmk_battery_state_of_charge();
-    if (initial_soc > 0) {
-        trigger_battery_display(initial_soc);
-    } else {
-        trigger_advertising();
-    }
+    // Show initial BLE profile & battery on boot
+    kugel_indicator_trigger(IND_ALL);
 
     return 0;
 }
