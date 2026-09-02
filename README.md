@@ -1,4 +1,4 @@
-﻿# ZMK Config for Kugel-1 (BLE Micro Pro Dedicated)
+# ZMK Config for Kugel-1 (BLE Micro Pro Dedicated)
 
 Kugel-1 自作キーボード用の **BLE Micro Pro (BMP)** 専用 ZMK Firmware リポジトリです。  
 Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** によるグラフィカルなキーマップ変更、**Prospector Scanner** による外付けステータス表示、単三乾電池のバッテリー残量監視、スマートな PCB LED インジケーター、トラックボールの10度刻み角度調整＆NVS永続化など、自作キーボードならではの高度な機能に完全対応しています。
@@ -151,7 +151,7 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
 
 ## 📥 書き込み手順
 
-1. BLE Micro Pro を USB ケーブルで PC に接続します。
-2. リセットボタンを素早く **2回押し**（ダブルタップ）して、ブートローダーモード（マスストレージドライブ）に入ります。
-3. PC に認識されたドライブ（**`BLEMICROPRO`**）に、生成された `build/artifacts/kugel_ble_micro_pro.uf2` をドラッグ＆ドロップします。
-4. 書き込みが完了すると、自動的に再起動して Kugel-1 として動作を開始します。
+1. **リセットボタンを押しながら**、BLE Micro Pro を USB ケーブルで PC に接続します。  
+   （※すでに接続済みの場合は、Adjustレイヤーの `&bootloader` キーを押すか、1200bps touch 経由でもブートローダーへ入れます）
+2. PC に認識されたドライブ（**`BLEMICROPRO`**）に、生成された `build/artifacts/kugel_ble_micro_pro.uf2` をドラッグ＆ドロップします。
+3. 書き込みが完了すると、自動的に再起動して Kugel-1 として動作を開始します。
