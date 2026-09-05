@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Status Indicator Behavior Driver for ZMK
  * Copyright (c) 2026 The ZMK Contributors
  * SPDX-License-Identifier: MIT
@@ -27,6 +27,9 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
     case IND_BAT:
     case IND_ALL:
         kugel_indicator_trigger(binding->param1);
+        break;
+    case IND_AM_LED:
+        kugel_indicator_cycle_am_led_mode();
         break;
     default:
         LOG_WRN("Unknown indicator command: %d", binding->param1);

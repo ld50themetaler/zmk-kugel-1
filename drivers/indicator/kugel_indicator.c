@@ -14,10 +14,16 @@
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/usb_conn_state_changed.h>
+#include <zmk/events/layer_state_changed.h>
 #include <zmk/ble.h>
 #include <zmk/battery.h>
 #include <zmk/activity.h>
 #include <zmk/usb.h>
+#include <zmk/keymap.h>
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+#include <zephyr/settings/settings.h>
+#endif
 
 #include "kugel_indicator.h"
 
@@ -40,7 +46,17 @@ enum indicator_mode {
     MODE_SHOW_ALL_BLE,
     MODE_SHOW_ALL_PAUSE,
     MODE_SHOW_ALL_BATTERY,
+    MODE_AM_PREVIEW_OFF,
 };
+
+enum am_led_mode {
+    AM_LED_OFF = 0,
+    AM_LED_DIM = 1,
+    AM_LED_BREATHE = 2,
+    AM_LED_MODE_COUNT = 3,
+};
+
+#define MOUSE_LAYER_ID 4
 
 static struct {
     enum indicator_mode mode;
@@ -53,6 +69,26 @@ static struct {
     struct k_work_delayable glow_work;
 } g_ind;
 
+static uint8_t g_am_led_mode = AM_LED_DIM;
+static bool g_mouse_layer_active = false;
+static bool g_preview_active = false;
+static uint16_t g_preview_cycles_left = 0;
+
+static struct k_timer g_am_pwm_timer;
+static bool s_pwm_is_on = false;
+static uint8_t s_breathe_step = 0;
+static uint32_t s_current_on_time = 0;
+
+/* Smooth breathing curve (40 steps, ~1.4s cycle)
+ * Duty values in ms (out of 20ms period): 0ms (0%) to 6ms (30% brightness)
+ */
+static const uint8_t s_breathe_duty[40] = {
+    0, 0, 1, 1, 1, 2, 2, 2, 3, 3,
+    4, 4, 5, 5, 6, 6, 6, 6, 5, 5,
+    5, 4, 4, 3, 3, 2, 2, 2, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
 static void led_set(bool on)
 {
     if (s_led.port != NULL) {
@@ -61,12 +97,19 @@ static void led_set(bool on)
 }
 
 static void trigger_advertising(void);
+static void start_am_pwm(void);
+static void stop_am_pwm(void);
 
 static void return_to_idle_or_advertising(void)
 {
     if (zmk_usb_is_powered()) {
         led_set(true);
         g_ind.mode = MODE_USB_POWERED;
+        return;
+    }
+
+    if (g_mouse_layer_active && g_am_led_mode != AM_LED_OFF) {
+        start_am_pwm();
         return;
     }
 
@@ -87,6 +130,168 @@ static void trigger_advertising(void)
     g_ind.step = 0;
     k_work_reschedule(&g_ind.work, K_MSEC(100));
 }
+
+static void am_pwm_timer_handler(struct k_timer *timer)
+{
+    if (g_ind.is_sleeping || zmk_usb_is_powered() || g_ind.mode >= MODE_SHOW_BLE) {
+        led_set(false);
+        s_pwm_is_on = false;
+        return;
+    }
+
+    if (!g_mouse_layer_active && !g_preview_active) {
+        led_set(false);
+        s_pwm_is_on = false;
+        return;
+    }
+
+    if (s_pwm_is_on) {
+        // Currently ON -> Turn OFF for remainder of 20ms cycle
+        led_set(false);
+        s_pwm_is_on = false;
+        uint32_t off_time = 20 - s_current_on_time;
+        if (off_time == 0) {
+            off_time = 1;
+        }
+        k_timer_start(&g_am_pwm_timer, K_MSEC(off_time), K_NO_WAIT);
+    } else {
+        // Currently OFF -> Start new cycle (determine on_time)
+        uint8_t effective_mode = g_am_led_mode;
+
+        if (g_preview_active) {
+            if (g_preview_cycles_left > 0) {
+                g_preview_cycles_left--;
+            } else {
+                g_preview_active = false;
+                led_set(false);
+                s_pwm_is_on = false;
+                return_to_idle_or_advertising();
+                return;
+            }
+        }
+
+        if (effective_mode == AM_LED_DIM) {
+            s_current_on_time = 2; // 10% duty (2ms ON / 18ms OFF)
+        } else if (effective_mode == AM_LED_BREATHE) {
+            s_current_on_time = s_breathe_duty[s_breathe_step];
+            s_breathe_step = (s_breathe_step + 1) % 40;
+        } else {
+            s_current_on_time = 0;
+        }
+
+        if (s_current_on_time == 0) {
+            led_set(false);
+            s_pwm_is_on = false;
+            k_timer_start(&g_am_pwm_timer, K_MSEC(20), K_NO_WAIT);
+        } else {
+            led_set(true);
+            s_pwm_is_on = true;
+            k_timer_start(&g_am_pwm_timer, K_MSEC(s_current_on_time), K_NO_WAIT);
+        }
+    }
+}
+
+static void start_am_pwm(void)
+{
+    if (g_ind.is_sleeping || zmk_usb_is_powered() || g_ind.mode >= MODE_SHOW_BLE) {
+        return;
+    }
+
+    if (g_am_led_mode == AM_LED_OFF && !g_preview_active) {
+        led_set(false);
+        return;
+    }
+
+    s_pwm_is_on = false;
+    s_breathe_step = 0;
+    k_timer_start(&g_am_pwm_timer, K_NO_WAIT, K_NO_WAIT);
+}
+
+static void stop_am_pwm(void)
+{
+    k_timer_stop(&g_am_pwm_timer);
+    s_pwm_is_on = false;
+    g_preview_active = false;
+    if (g_ind.mode < MODE_SHOW_BLE && !zmk_usb_is_powered()) {
+        led_set(false);
+    }
+}
+
+void kugel_indicator_mouse_layer_changed(bool active)
+{
+    g_mouse_layer_active = active;
+    LOG_INF("Mouse layer active: %d, am_led_mode: %d", active, g_am_led_mode);
+
+    if (active) {
+        start_am_pwm();
+    } else {
+        stop_am_pwm();
+        return_to_idle_or_advertising();
+    }
+}
+
+void kugel_indicator_cycle_am_led_mode(void)
+{
+    g_am_led_mode = (g_am_led_mode + 1) % AM_LED_MODE_COUNT;
+    LOG_INF("Auto-Mouse LED Mode cycled -> %d", g_am_led_mode);
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+    settings_save_one("ind/am_led", &g_am_led_mode, sizeof(g_am_led_mode));
+    LOG_INF("Saved ind/am_led to NVS: %d", g_am_led_mode);
+#endif
+
+    stop_am_pwm();
+
+    if (g_am_led_mode == AM_LED_OFF) {
+        // Short blink (50ms) to indicate OFF
+        led_set(true);
+        k_work_cancel_delayable(&g_ind.work);
+        g_ind.mode = MODE_AM_PREVIEW_OFF;
+        k_work_reschedule(&g_ind.work, K_MSEC(50));
+    } else if (g_am_led_mode == AM_LED_DIM) {
+        // Preview DIM for 600ms (30 cycles of 20ms)
+        g_preview_active = true;
+        g_preview_cycles_left = 30;
+        start_am_pwm();
+    } else if (g_am_led_mode == AM_LED_BREATHE) {
+        // Preview 1 full breath cycle (45 cycles of 20ms = ~900ms)
+        g_preview_active = true;
+        g_preview_cycles_left = 45;
+        start_am_pwm();
+    }
+}
+
+uint8_t kugel_indicator_get_am_led_mode(void)
+{
+    return g_am_led_mode;
+}
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+static int ind_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg)
+{
+    const char *next;
+    int rc;
+
+    if (settings_name_steq(name, "am_led", &next) && !next) {
+        if (len != sizeof(g_am_led_mode)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &g_am_led_mode, sizeof(g_am_led_mode));
+        if (rc >= 0) {
+            if (g_am_led_mode >= AM_LED_MODE_COUNT) {
+                g_am_led_mode = AM_LED_DIM;
+            }
+            LOG_INF("Loaded ind/am_led: %d", g_am_led_mode);
+            return 0;
+        }
+        return rc;
+    }
+
+    return -ENOENT;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(ind, "ind", NULL, ind_settings_set, NULL, NULL);
+#endif
 
 static void start_ble_sequence(enum indicator_mode next_mode)
 {
@@ -135,6 +340,7 @@ void kugel_indicator_trigger(uint8_t mode)
         return;
     }
 
+    stop_am_pwm();
     k_work_cancel_delayable(&g_ind.work);
     k_work_cancel_delayable(&g_ind.glow_work);
     led_set(false);
@@ -164,6 +370,8 @@ static void glow_off_work_handler(struct k_work *work)
 
     if (zmk_usb_is_powered()) {
         led_set(true);
+    } else if (g_mouse_layer_active && g_am_led_mode != AM_LED_OFF) {
+        start_am_pwm();
     } else if (g_ind.mode < MODE_SHOW_BLE) {
         led_set(false);
     }
@@ -184,6 +392,7 @@ void kugel_indicator_key_press(void)
     // Low Battery Key Glow: when SOC <= 20%, blink LED for 25ms on each key press
     uint8_t soc = zmk_battery_state_of_charge();
     if (soc <= 20) {
+        k_timer_stop(&g_am_pwm_timer);
         led_set(true);
         k_work_reschedule(&g_ind.glow_work, K_MSEC(25));
     }
@@ -198,10 +407,13 @@ static void indicator_work_handler(struct k_work *work)
     }
 
     switch (g_ind.mode) {
+    case MODE_AM_PREVIEW_OFF:
+        led_set(false);
+        return_to_idle_or_advertising();
+        break;
+
     case MODE_SHOW_BLE:
     case MODE_SHOW_ALL_BLE: {
-        // Step 0..2*N-1: Pulses for profile index
-        // Each pulse: 120ms ON, 180ms OFF
         uint8_t max_pulse_steps = g_ind.target_pulses * 2;
         if (g_ind.step < max_pulse_steps) {
             if (g_ind.step % 2 == 0) {
@@ -214,13 +426,11 @@ static void indicator_work_handler(struct k_work *work)
                 k_work_reschedule(&g_ind.work, K_MSEC(180));
             }
         } else if (g_ind.step == max_pulse_steps) {
-            // Pulses complete. If connected, show 600ms solid ON!
             if (g_ind.ble_connected) {
                 led_set(true);
                 g_ind.step++;
                 k_work_reschedule(&g_ind.work, K_MSEC(600));
             } else {
-                // Not connected: finish BLE phase
                 led_set(false);
                 if (g_ind.mode == MODE_SHOW_ALL_BLE) {
                     g_ind.mode = MODE_SHOW_ALL_PAUSE;
@@ -230,7 +440,6 @@ static void indicator_work_handler(struct k_work *work)
                 }
             }
         } else {
-            // Connected solid ON finished
             led_set(false);
             if (g_ind.mode == MODE_SHOW_ALL_BLE) {
                 g_ind.mode = MODE_SHOW_ALL_PAUSE;
@@ -243,16 +452,12 @@ static void indicator_work_handler(struct k_work *work)
     }
 
     case MODE_SHOW_ALL_PAUSE:
-        // Pause between BLE and Battery displays (dark for 800ms)
         led_set(false);
         start_battery_sequence(MODE_SHOW_ALL_BATTERY);
         break;
 
     case MODE_SHOW_BATTERY:
     case MODE_SHOW_ALL_BATTERY: {
-        // Battery pulse sequence:
-        // Standard: 150ms ON, 200ms OFF
-        // Low battery: 500ms ON, 200ms OFF
         uint8_t max_pulse_steps = g_ind.target_pulses * 2;
         if (g_ind.step < max_pulse_steps) {
             if (g_ind.step % 2 == 0) {
@@ -266,7 +471,6 @@ static void indicator_work_handler(struct k_work *work)
                 k_work_reschedule(&g_ind.work, K_MSEC(200));
             }
         } else {
-            // Battery display complete
             return_to_idle_or_advertising();
         }
         break;
@@ -278,7 +482,6 @@ static void indicator_work_handler(struct k_work *work)
             g_ind.mode = MODE_USB_POWERED;
             break;
         }
-        // Periodic advertising pattern: 50ms ON, 100ms OFF, 50ms ON, 4800ms OFF (5s period)
         switch (g_ind.step) {
         case 0:
             led_set(true);
@@ -323,8 +526,6 @@ static int ble_profile_listener(const zmk_event_t *eh)
     }
 
     LOG_INF("BLE profile changed: index=%d", ev->index);
-
-    // Automatically trigger BLE indicator on profile change!
     kugel_indicator_trigger(IND_BLE);
 
     return ZMK_EV_EVENT_BUBBLE;
@@ -362,6 +563,7 @@ static int activity_state_listener(const zmk_event_t *eh)
     if (ev->state == ZMK_ACTIVITY_SLEEP) {
         LOG_INF("Entering sleep, turning off LED indicator");
         g_ind.is_sleeping = true;
+        stop_am_pwm();
         k_work_cancel_delayable(&g_ind.work);
         k_work_cancel_delayable(&g_ind.glow_work);
         led_set(false);
@@ -378,6 +580,23 @@ static int activity_state_listener(const zmk_event_t *eh)
 ZMK_LISTENER(kugel_activity_indicator, activity_state_listener);
 ZMK_SUBSCRIPTION(kugel_activity_indicator, zmk_activity_state_changed);
 
+static int layer_state_listener(const zmk_event_t *eh)
+{
+    const struct zmk_layer_state_changed *ev = as_zmk_layer_state_changed(eh);
+    if (ev == NULL) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    if (ev->layer == MOUSE_LAYER_ID) {
+        kugel_indicator_mouse_layer_changed(ev->state);
+    }
+
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(kugel_layer_indicator, layer_state_listener);
+ZMK_SUBSCRIPTION(kugel_layer_indicator, zmk_layer_state_changed);
+
 static int kugel_indicator_init(void)
 {
     if (!gpio_is_ready_dt(&s_led)) {
@@ -393,10 +612,10 @@ static int kugel_indicator_init(void)
 
     k_work_init_delayable(&g_ind.work, indicator_work_handler);
     k_work_init_delayable(&g_ind.glow_work, glow_off_work_handler);
+    k_timer_init(&g_am_pwm_timer, am_pwm_timer_handler, NULL);
 
     LOG_INF("Kugel indicator initialized successfully on P0.08");
 
-    // Show initial state
     if (zmk_usb_is_powered()) {
         led_set(true);
         g_ind.mode = MODE_USB_POWERED;
