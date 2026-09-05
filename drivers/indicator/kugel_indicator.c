@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2026 The ZMK Contributors
  * SPDX-License-Identifier: MIT
  */
@@ -79,14 +79,27 @@ static bool s_pwm_is_on = false;
 static uint8_t s_breathe_step = 0;
 static uint32_t s_current_on_time = 0;
 
-/* Smooth breathing curve (40 steps, ~1.4s cycle)
+#define BREATHE_TOTAL_STEPS 120
+
+/* Smooth breathing curve (120 steps, ~2.4s cycle)
  * Duty values in ms (out of 20ms period): 0ms (0%) to 6ms (30% brightness)
  */
-static const uint8_t s_breathe_duty[40] = {
-    0, 0, 1, 1, 1, 2, 2, 2, 3, 3,
-    4, 4, 5, 5, 6, 6, 6, 6, 5, 5,
-    5, 4, 4, 3, 3, 2, 2, 2, 1, 1,
-    1, 1, 0, 0, 0, 0, 0, 0, 0, 0
+static const uint8_t s_breathe_duty[BREATHE_TOTAL_STEPS] = {
+    // Phase 1: Gentle rise (40 steps = 800ms)
+    0, 0, 0, 0, 1, 1, 1, 1, 1, 1,
+    2, 2, 2, 2, 2, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 5, 5, 5, 5, 5,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    // Phase 2: Gentle fall (40 steps = 800ms)
+    6, 6, 6, 6, 6, 5, 5, 5, 5, 5,
+    4, 4, 4, 4, 4, 3, 3, 3, 3, 3,
+    2, 2, 2, 2, 2, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    // Phase 3: Resting pause at dark (40 steps = 800ms)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
 static void led_set(bool on)
@@ -174,7 +187,7 @@ static void am_pwm_timer_handler(struct k_timer *timer)
             s_current_on_time = 2; // 10% duty (2ms ON / 18ms OFF)
         } else if (effective_mode == AM_LED_BREATHE) {
             s_current_on_time = s_breathe_duty[s_breathe_step];
-            s_breathe_step = (s_breathe_step + 1) % 40;
+            s_breathe_step = (s_breathe_step + 1) % BREATHE_TOTAL_STEPS;
         } else {
             s_current_on_time = 0;
         }
@@ -254,9 +267,9 @@ void kugel_indicator_cycle_am_led_mode(void)
         g_preview_cycles_left = 30;
         start_am_pwm();
     } else if (g_am_led_mode == AM_LED_BREATHE) {
-        // Preview 1 full breath cycle (45 cycles of 20ms = ~900ms)
+        // Preview 1 full breath cycle (~2.4s)
         g_preview_active = true;
-        g_preview_cycles_left = 45;
+        g_preview_cycles_left = BREATHE_TOTAL_STEPS;
         start_am_pwm();
     }
 }
