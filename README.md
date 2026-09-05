@@ -128,6 +128,7 @@ Bluetooth Low Energy (BLE) および USB で動作し、**ZMK Studio** による
     - 速度調整: `&tb TB_SPD_UP` / `&tb TB_SPD_DN`（16段階）
     - スクロール感度調整: `&tb TB_SCRL_UP` / `&tb TB_SCRL_DN`（6段階）
     - 角度調整: `&tb TB_ROT_CW`（時計回り+10°） / `&tb TB_ROT_CCW`（反時計回り-10°） / `&tb TB_ROT_RES`（0°リセット）
+    - オートマウス持続時間調整: `&tb TB_AM_TIME_UP`（+100ms延長） / `&tb TB_AM_TIME_DN`（-100ms短縮） / `&tb TB_AM_TIME_RES`（800msリセット）（調整範囲: 200ms〜3000ms）
     - 2次関数スムーズ加速ON/OFF: `&tb TB_ACCEL_TOG`
     - オートマウス有効/無効: `&tb TB_AM_TOG`
     - ※すべての設定値は NVS に自動永続化されます。

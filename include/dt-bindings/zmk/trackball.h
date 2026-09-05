@@ -17,6 +17,9 @@
 #define TB_ROT_CW    8
 #define TB_ROT_CCW   9
 #define TB_ROT_RES   10
+#define TB_AM_TIME_UP 11
+#define TB_AM_TIME_DN 12
+#define TB_AM_TIME_RES 13
 
 /* Aliases for convenience */
 #define TB_ROT_R     TB_ROT_CW

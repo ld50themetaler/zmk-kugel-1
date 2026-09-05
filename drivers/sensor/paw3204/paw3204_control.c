@@ -27,6 +27,9 @@ LOG_MODULE_REGISTER(paw3204_control, LOG_LEVEL_INF);
 #define MAX_SCROLL_LEVEL 6
 #define DEFAULT_AUTOMOUSE_ENABLE 1   // Enabled by default
 #define DEFAULT_AUTOMOUSE_TIMEOUT_MS 800
+#define MIN_AUTOMOUSE_TIMEOUT_MS     200
+#define MAX_AUTOMOUSE_TIMEOUT_MS     3000
+#define AUTOMOUSE_TIMEOUT_STEP_MS    100
 #define SNIPER_SPEED_DIV 6           // 3x slower than normal (div 6)
 #define DEFAULT_ROTATION_ANGLE 0     // 0 deg default (no tilt)
 #define MIN_ROTATION_ANGLE -180
@@ -118,6 +121,7 @@ struct tb_control_state {
     uint8_t speed_level;       // 1 (2.50x) to 16 (0.19x)
     uint8_t scroll_level;      // 1 (div 36) to 6 (div 6)
     int16_t rotation_angle;    // -180 to +180 deg (0 = default)
+    uint16_t automouse_timeout_ms; // 200 to 3000 ms (800ms default)
     bool automouse_enabled;
     bool automouse_active;
     bool sniper_active;
@@ -132,6 +136,7 @@ static struct tb_control_state g_tb = {
     .speed_level = DEFAULT_SPEED_LEVEL,
     .scroll_level = DEFAULT_SCROLL_LEVEL,
     .rotation_angle = DEFAULT_ROTATION_ANGLE,
+    .automouse_timeout_ms = DEFAULT_AUTOMOUSE_TIMEOUT_MS,
     .automouse_enabled = false,
     .automouse_active = false,
     .sniper_active = false,
@@ -224,6 +229,21 @@ static int tb_settings_set(const char *name, size_t len, settings_read_cb read_c
         return rc;
     }
 
+    if (settings_name_steq(name, "am_time", &next) && !next) {
+        if (len != sizeof(g_tb.automouse_timeout_ms)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &g_tb.automouse_timeout_ms, sizeof(g_tb.automouse_timeout_ms));
+        if (rc >= 0) {
+            if (g_tb.automouse_timeout_ms < MIN_AUTOMOUSE_TIMEOUT_MS || g_tb.automouse_timeout_ms > MAX_AUTOMOUSE_TIMEOUT_MS) {
+                g_tb.automouse_timeout_ms = DEFAULT_AUTOMOUSE_TIMEOUT_MS;
+            }
+            LOG_INF("Loaded tb/am_time: %d ms", g_tb.automouse_timeout_ms);
+            return 0;
+        }
+        return rc;
+    }
+
     return -ENOENT;
 }
 
@@ -238,8 +258,9 @@ static void settings_save_work_handler(struct k_work *work)
     settings_save_one("tb/am_en", &am_val, sizeof(am_val));
     settings_save_one("tb/accel", &accel_val, sizeof(accel_val));
     settings_save_one("tb/rot", &g_tb.rotation_angle, sizeof(g_tb.rotation_angle));
-    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d, accel=%d, rot=%d deg)",
-            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val, accel_val, g_tb.rotation_angle);
+    settings_save_one("tb/am_time", &g_tb.automouse_timeout_ms, sizeof(g_tb.automouse_timeout_ms));
+    LOG_INF("Trackball settings saved to NVS (speed=%d, scrl=%d (div %d), am_en=%d, accel=%d, rot=%d deg, am_time=%d ms)",
+            g_tb.speed_level, g_tb.scroll_level, s_scroll_div_table[g_tb.scroll_level - 1], am_val, accel_val, g_tb.rotation_angle, g_tb.automouse_timeout_ms);
 }
 
 static void schedule_settings_save(void)
@@ -278,8 +299,8 @@ void paw3204_control_on_motion(int8_t dx, int8_t dy)
         }
     }
 
-    // Reset timeout timer (800ms)
-    k_work_reschedule(&g_tb.automouse_timeout_work, K_MSEC(DEFAULT_AUTOMOUSE_TIMEOUT_MS));
+    // Reset timeout timer
+    k_work_reschedule(&g_tb.automouse_timeout_work, K_MSEC(g_tb.automouse_timeout_ms));
 }
 
 /* --- Pointer Speed & Motion Calculation --- */
@@ -437,6 +458,36 @@ void paw3204_control_toggle_automouse(void)
 bool paw3204_control_is_automouse_enabled(void)
 {
     return g_tb.automouse_enabled;
+}
+
+void paw3204_control_automouse_time_up(void)
+{
+    if (g_tb.automouse_timeout_ms < MAX_AUTOMOUSE_TIMEOUT_MS) {
+        g_tb.automouse_timeout_ms += AUTOMOUSE_TIMEOUT_STEP_MS;
+        LOG_INF("Auto-Mouse timeout increased -> %d ms", g_tb.automouse_timeout_ms);
+        schedule_settings_save();
+    }
+}
+
+void paw3204_control_automouse_time_down(void)
+{
+    if (g_tb.automouse_timeout_ms > MIN_AUTOMOUSE_TIMEOUT_MS) {
+        g_tb.automouse_timeout_ms -= AUTOMOUSE_TIMEOUT_STEP_MS;
+        LOG_INF("Auto-Mouse timeout decreased -> %d ms", g_tb.automouse_timeout_ms);
+        schedule_settings_save();
+    }
+}
+
+void paw3204_control_automouse_time_reset(void)
+{
+    g_tb.automouse_timeout_ms = DEFAULT_AUTOMOUSE_TIMEOUT_MS;
+    LOG_INF("Auto-Mouse timeout RESET -> %d ms", g_tb.automouse_timeout_ms);
+    schedule_settings_save();
+}
+
+uint16_t paw3204_control_get_automouse_time(void)
+{
+    return g_tb.automouse_timeout_ms;
 }
 
 void paw3204_control_toggle_acceleration(void)

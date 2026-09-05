@@ -46,6 +46,10 @@ uint8_t paw3204_control_get_scroll_level(void);
 // Auto-Mouse Layer Control
 void paw3204_control_toggle_automouse(void);
 bool paw3204_control_is_automouse_enabled(void);
+void paw3204_control_automouse_time_up(void);
+void paw3204_control_automouse_time_down(void);
+void paw3204_control_automouse_time_reset(void);
+uint16_t paw3204_control_get_automouse_time(void);
 
 // Acceleration Control
 void paw3204_control_toggle_acceleration(void);

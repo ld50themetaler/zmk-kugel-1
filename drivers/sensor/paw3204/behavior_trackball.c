@@ -54,6 +54,15 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
     case TB_ROT_RES:
         paw3204_control_rotate_reset();
         break;
+    case TB_AM_TIME_UP:
+        paw3204_control_automouse_time_up();
+        break;
+    case TB_AM_TIME_DN:
+        paw3204_control_automouse_time_down();
+        break;
+    case TB_AM_TIME_RES:
+        paw3204_control_automouse_time_reset();
+        break;
     default:
         LOG_WRN("Unknown trackball command: %d", binding->param1);
         return -ENOTSUP;
